@@ -2,6 +2,7 @@
  * 髹涂道次（Coat）数据模型
  * 一件胎体上的逐道髹涂记录：漆种、色名、涂刷日期、湿膜厚度与状态推进。
  */
+import { UNTRACED_BATCH_ID, type FreezableRecord } from './freeze';
 
 /** 漆种：生漆 / 色漆 / 罩漆 */
 export type PaintType = 'raw' | 'color' | 'topcoat';
@@ -27,11 +28,21 @@ export interface Coat {
   state: CoatState;
   /** 荫房判定异常时回写的「待复检」标记 */
   needRecheck: boolean;
+  /** 使用漆料批次 id；旧数据无批次时为 UNTRACED_BATCH_ID（未追溯） */
+  batchId: string;
+  /** 召回冻结元数据（批次停用后冻结，原值保留） */
+  frozen: FreezableRecord['frozen'];
+  frozenByRecallId: FreezableRecord['frozenByRecallId'];
+  frozenAt: FreezableRecord['frozenAt'];
+  frozenReason: FreezableRecord['frozenReason'];
   createdAt: number;
   updatedAt: number;
 }
 
-export type CoatDraft = Omit<Coat, 'id' | 'createdAt' | 'updatedAt'>;
+export type CoatDraft = Omit<
+  Coat,
+  'id' | 'createdAt' | 'updatedAt' | 'frozen' | 'frozenByRecallId' | 'frozenAt' | 'frozenReason'
+>;
 
 export const PAINT_TYPE_LABEL: Record<PaintType, string> = {
   raw: '生漆',
@@ -91,5 +102,6 @@ export function createEmptyCoatDraft(bodyId: string, seq: number): CoatDraft {
     thicknessUm: 40,
     state: 'todo',
     needRecheck: false,
+    batchId: UNTRACED_BATCH_ID,
   };
 }

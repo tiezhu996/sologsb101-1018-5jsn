@@ -3,7 +3,7 @@
  * 支持按类型与位置筛选、批量调整图案分类，并在器型示意区叠加显示。
  * 消费 Inlay、Body；复用 <FilterBar>、<EmptyPanel>、<StatBadge>。
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   App as AntdApp,
   Button,
@@ -24,9 +24,12 @@ import type { ColumnsType } from 'antd/es/table';
 import { DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons';
 import EmptyPanel from '@/components/common/EmptyPanel';
 import FilterBar, { useFilterQuery, type FilterSelectConfig } from '@/components/common/FilterBar';
+import FrozenTag from '@/components/common/FrozenTag';
 import StatBadge from '@/components/common/StatBadge';
 import { useIdbTable } from '@/hooks/useIdbTable';
 import { useBodyStore } from '@/stores/bodyStore';
+import { usePaintStore } from '@/stores/paintStore';
+import { UNTRACED_BATCH_ID, UNTRACED_BATCH_LABEL } from '@/types/freeze';
 import { BODY_SHAPE_LABEL } from '@/types/body';
 import {
   INLAY_PATTERN_OPTIONS,
@@ -66,6 +69,12 @@ export default function InlayBoard() {
   const currentBodyId = useBodyStore((state) => state.currentBodyId);
   const setCurrentBodyId = useBodyStore((state) => state.setCurrentBodyId);
 
+  const batches = usePaintStore((state) => state.batches);
+  const loadPaint = usePaintStore((state) => state.loadPaint);
+  useEffect(() => {
+    void loadPaint();
+  }, [loadPaint]);
+
   const url = useFilterQuery(FILTER_KEYS);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Inlay | null>(null);
@@ -98,11 +107,15 @@ export default function InlayBoard() {
       return;
     }
     setEditing(null);
-    form.setFieldsValue(createEmptyInlayDraft(bodyId));
+    form.setFieldsValue({ ...createEmptyInlayDraft(bodyId), batchId: UNTRACED_BATCH_ID });
     setOpen(true);
   };
 
   const openEdit = (row: Inlay): void => {
+    if (row.frozen) {
+      message.warning('该镶嵌记录已被召回冻结，原值保留，禁止编辑');
+      return;
+    }
     setEditing(row);
     form.setFieldsValue({
       bodyId: row.bodyId,
@@ -110,20 +123,30 @@ export default function InlayBoard() {
       pattern: row.pattern,
       position: row.position,
       materialNote: row.materialNote,
+      batchId: row.batchId,
     });
     setOpen(true);
   };
 
+  const batchLabel = (batchId: string): string => {
+    if (batchId === UNTRACED_BATCH_ID) return UNTRACED_BATCH_LABEL;
+    return batches.find((batch) => batch.id === batchId)?.batchNo ?? batchId;
+  };
+
   const submit = async (): Promise<void> => {
     const values = await form.validateFields();
-    if (editing) {
-      await inlayTable.update(editing.id, values);
-      message.success('已更新镶嵌登记');
-    } else {
-      await inlayTable.create(values, 'inlay');
-      message.success('已新增镶嵌登记');
+    try {
+      if (editing) {
+        await inlayTable.update(editing.id, values);
+        message.success('已更新镶嵌登记');
+      } else {
+        await inlayTable.create(values, 'inlay');
+        message.success('已新增镶嵌登记');
+      }
+      setOpen(false);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '保存失败');
     }
-    setOpen(false);
   };
 
   const columns: ColumnsType<Inlay> = [
@@ -136,6 +159,17 @@ export default function InlayBoard() {
       render: (value: InlayType) => <Tag color={INLAY_TYPE_COLOR[value]}>{INLAY_TYPE_LABEL[value]}</Tag>,
     },
     { title: '图案', dataIndex: 'pattern', width: 140 },
+    {
+      title: '漆料批次',
+      dataIndex: 'batchId',
+      width: 130,
+      render: (value: string, record) => (
+        <Space size={4} wrap>
+          <Tag color={value === UNTRACED_BATCH_ID ? 'default' : 'gold'}>{batchLabel(value)}</Tag>
+          <FrozenTag frozen={record.frozen} reason={record.frozenReason} size="small" />
+        </Space>
+      ),
+    },
     { title: '位置', dataIndex: 'position', width: 100, render: (value: string) => <Tag>{value}</Tag> },
     {
       title: '所属胎体',
@@ -156,23 +190,33 @@ export default function InlayBoard() {
       title: '操作',
       key: 'action',
       width: 170,
-      render: (_value, record) => (
-        <Space size={4}>
-          <Button size="small" type="link" icon={<EditOutlined />} onClick={() => openEdit(record)}>
-            编辑
-          </Button>
-          <Popconfirm
-            title="删除该镶嵌记录"
-            okText="确认"
-            cancelText="取消"
-            onConfirm={() => void inlayTable.remove(record.id).then(() => message.success('已删除'))}
-          >
-            <Button size="small" type="link" danger icon={<DeleteOutlined />}>
-              删除
+      render: (_value, record) =>
+        record.frozen ? (
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            召回冻结 · 原值保留
+          </Typography.Text>
+        ) : (
+          <Space size={4}>
+            <Button size="small" type="link" icon={<EditOutlined />} onClick={() => openEdit(record)}>
+              编辑
             </Button>
-          </Popconfirm>
-        </Space>
-      ),
+            <Popconfirm
+              title="删除该镶嵌记录"
+              okText="确认"
+              cancelText="取消"
+              onConfirm={() =>
+                void inlayTable.remove(record.id).then(
+                  () => message.success('已删除'),
+                  (error: unknown) => message.error(error instanceof Error ? error.message : '删除失败'),
+                )
+              }
+            >
+              <Button size="small" type="link" danger icon={<DeleteOutlined />}>
+                删除
+              </Button>
+            </Popconfirm>
+          </Space>
+        ),
     },
   ];
 
@@ -238,10 +282,14 @@ export default function InlayBoard() {
               disabled={selectedIds.length === 0}
               onClick={() => {
                 const now = Date.now();
-                const rows = inlayTable.rows
-                  .filter((row) => selectedIds.includes(row.id))
+                const rowsToUpdate = inlayTable.rows
+                  .filter((row) => selectedIds.includes(row.id) && !row.frozen)
                   .map((row) => ({ ...row, type: batchType, updatedAt: now }));
-                void inlayTable.bulkPut(rows).then(() => {
+                if (rowsToUpdate.length === 0) {
+                  message.warning('所选记录均已召回冻结，禁止调整分类');
+                  return;
+                }
+                void inlayTable.bulkPut(rowsToUpdate).then(() => {
                   message.success(`已批量改为${INLAY_TYPE_LABEL[batchType]}`);
                   setSelectedIds([]);
                 });
@@ -307,9 +355,11 @@ export default function InlayBoard() {
                 pagination={{ pageSize: 8 }}
                 columns={columns}
                 dataSource={filtered}
+                rowClassName={(record) => (record.frozen ? 'gb-row-frozen' : '')}
                 rowSelection={{
                   selectedRowKeys: selectedIds,
                   onChange: (keys) => setSelectedIds(keys.map((key) => String(key))),
+                  getCheckboxProps: (record) => ({ disabled: record.frozen }),
                 }}
               />
             )}
@@ -348,6 +398,27 @@ export default function InlayBoard() {
               showSearch
               placeholder="如：缠枝莲"
               options={INLAY_PATTERN_OPTIONS.map((item) => ({ value: item, label: item }))}
+            />
+          </Form.Item>
+          <Form.Item
+            name="batchId"
+            label="粘固 / 描金所用漆料批次"
+            tooltip="镶嵌工序同样领用漆料；旧数据无批次时标记为「未追溯」，正式领用请到「漆料与召回」页登记"
+            rules={[{ required: true, message: '请选择漆料批次或标记为未追溯' }]}
+          >
+            <Select
+              showSearch
+              optionFilterProp="label"
+              options={[
+                { value: UNTRACED_BATCH_ID, label: `${UNTRACED_BATCH_LABEL}（旧数据无批次）` },
+                ...batches.map((batch) => ({
+                  value: batch.id,
+                  label: `${batch.batchNo} · ${batch.colorName}（余 ${batch.remainingQty} ${batch.unit}${
+                    batch.status === 'inactive' ? ' · 已停用' : ''
+                  }）`,
+                  disabled: batch.status === 'inactive',
+                })),
+              ]}
             />
           </Form.Item>
           <Form.Item name="materialNote" label="材料与工艺备注">

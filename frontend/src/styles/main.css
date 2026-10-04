@@ -188,6 +188,16 @@ body::before {
   padding-inline-end: 6px;
 }
 
+.gb-drag-handle.is-disabled {
+  cursor: not-allowed;
+  color: rgba(89, 89, 92, 0.45);
+}
+
+/* 召回冻结记录：行底色提示原值封存 */
+.ant-table-tbody > tr.ant-table-row.gb-row-frozen > td.ant-table-cell {
+  background: rgba(89, 89, 92, 0.06);
+}
+
 .gb-row-dragging {
   opacity: 0.5;
 }

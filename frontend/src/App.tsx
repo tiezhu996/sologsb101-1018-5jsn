@@ -7,6 +7,7 @@ import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { App as AntdApp, Badge, Button, Layout, Menu, Space, Tag, Typography } from 'antd';
 import {
   AppstoreOutlined,
+  AuditOutlined,
   BgColorsOutlined,
   CloudOutlined,
   DashboardOutlined,
@@ -19,6 +20,7 @@ import { useBodyStore } from './stores/bodyStore';
 import { useCoatStore } from './stores/coatStore';
 import { useRoomStore } from './stores/roomStore';
 import { initDatabase } from './utils/db';
+import { resumePendingRecalls } from './utils/paintService';
 import { BODY_MATERIAL_LABEL, BODY_SHAPE_LABEL, BODY_STATE_LABEL } from './types/body';
 
 const { Header, Sider, Content, Footer } = Layout;
@@ -43,6 +45,15 @@ export default function App() {
         await initDatabase();
         if (cancelled) return;
         await Promise.all([loadBodies(), loadCoats(), loadRooms()]);
+        // 重启后续处理「冻结中 / 冻结失败」的召回单（未确认的不自动冻结）
+        const result = await resumePendingRecalls();
+        if (cancelled) return;
+        if (result.resumed.length > 0) {
+          message.success(`已在启动后完成 ${result.resumed.length} 份召回单的续冻结`);
+        }
+        if (result.failed.length > 0) {
+          message.warning(`有 ${result.failed.length} 份召回单仍冻结失败，可在漆料台账页重试`);
+        }
       } catch (error) {
         if (cancelled) return;
         message.error(`本地数据库初始化失败：${error instanceof Error ? error.message : '未知错误'}`);
@@ -60,11 +71,13 @@ export default function App() {
       ? ROUTES.rooms
       : location.pathname.startsWith('/polish')
         ? ROUTES.polish
-        : location.pathname.startsWith('/inlays')
+      : location.pathname.startsWith('/inlays')
           ? ROUTES.inlays
-          : location.pathname.startsWith('/export')
-            ? ROUTES.export
-            : ROUTES.bodies;
+          : location.pathname.startsWith('/paint')
+            ? ROUTES.paint
+            : location.pathname.startsWith('/export')
+              ? ROUTES.export
+              : ROUTES.bodies;
 
   return (
     <Layout style={{ minHeight: '100vh', background: 'transparent' }}>
@@ -89,6 +102,7 @@ export default function App() {
             { key: ROUTES.rooms, icon: <CloudOutlined />, label: '荫房记录' },
             { key: ROUTES.polish, icon: <BgColorsOutlined />, label: '打磨推光' },
             { key: ROUTES.inlays, icon: <HighlightOutlined />, label: '镶嵌纹饰' },
+            { key: ROUTES.paint, icon: <AuditOutlined />, label: '漆料与召回' },
             { key: ROUTES.export, icon: <ExportOutlined />, label: '质检与导出' },
           ]}
         />

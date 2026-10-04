@@ -32,6 +32,7 @@ import {
   ReloadOutlined,
 } from '@ant-design/icons';
 import EmptyPanel from '@/components/common/EmptyPanel';
+import FrozenTag from '@/components/common/FrozenTag';
 import StatBadge from '@/components/common/StatBadge';
 import { useIdbTable } from '@/hooks/useIdbTable';
 import { useBodyStore } from '@/stores/bodyStore';
@@ -111,6 +112,10 @@ export default function ExportView() {
   };
 
   const openEdit = (row: Inspect): void => {
+    if (row.frozen) {
+      message.warning('该质检记录已被召回冻结，原值保留，禁止编辑');
+      return;
+    }
     setEditing(row);
     form.setFieldsValue({
       bodyId: row.bodyId,
@@ -131,16 +136,20 @@ export default function ExportView() {
       defectCoatSeq: values.verdict === 'rework' ? (values.defectCoatSeq ?? null) : null,
       defectRoomId: values.verdict === 'rework' ? (values.defectRoomId ?? null) : null,
     };
-    if (editing) {
-      await inspectTable.update(editing.id, payload);
-      message.success('已更新质检记录');
-    } else {
-      await inspectTable.create(payload, 'inspect');
-      message.success(
-        payload.verdict === 'rework' ? '已登记返工，可在下方返工清单中查看定位结果' : '已登记质检合格',
-      );
+    try {
+      if (editing) {
+        await inspectTable.update(editing.id, payload);
+        message.success('已更新质检记录');
+      } else {
+        await inspectTable.create(payload, 'inspect');
+        message.success(
+          payload.verdict === 'rework' ? '已登记返工，可在下方返工清单中查看定位结果' : '已登记质检合格',
+        );
+      }
+      setOpen(false);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '保存失败');
     }
-    setOpen(false);
   };
 
   const handleExport = async (): Promise<void> => {
@@ -178,8 +187,7 @@ export default function ExportView() {
         await importSnapshot(parsed as LacquerSnapshot);
         await Promise.all([loadBodies(), loadCoats(), loadRooms()]);
         message.success('导入完成，数据已覆盖');
-      },
-    });
+      },    });
   };
 
   const handleReset = async (): Promise<void> => {
@@ -202,7 +210,12 @@ export default function ExportView() {
       width: 100,
       filters: INSPECT_VERDICT_OPTIONS.map((item) => ({ text: item.label, value: item.value })),
       onFilter: (value, record) => record.verdict === value,
-      render: (value: InspectVerdict) => <Tag color={INSPECT_VERDICT_COLOR[value]}>{INSPECT_VERDICT_LABEL[value]}</Tag>,
+      render: (value: InspectVerdict, record) => (
+        <Space size={4} wrap>
+          <Tag color={INSPECT_VERDICT_COLOR[value]}>{INSPECT_VERDICT_LABEL[value]}</Tag>
+          <FrozenTag frozen={record.frozen} reason={record.frozenReason} size="small" />
+        </Space>
+      ),
     },
     {
       title: '缺陷说明',
@@ -243,23 +256,33 @@ export default function ExportView() {
       title: '操作',
       key: 'action',
       width: 170,
-      render: (_value, record) => (
-        <Space size={4}>
-          <Button size="small" type="link" icon={<EditOutlined />} onClick={() => openEdit(record)}>
-            编辑
-          </Button>
-          <Popconfirm
-            title="删除该质检记录"
-            okText="确认"
-            cancelText="取消"
-            onConfirm={() => void inspectTable.remove(record.id).then(() => message.success('已删除'))}
-          >
-            <Button size="small" type="link" danger icon={<DeleteOutlined />}>
-              删除
+      render: (_value, record) =>
+        record.frozen ? (
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            召回冻结 · 原值保留
+          </Typography.Text>
+        ) : (
+          <Space size={4}>
+            <Button size="small" type="link" icon={<EditOutlined />} onClick={() => openEdit(record)}>
+              编辑
             </Button>
-          </Popconfirm>
-        </Space>
-      ),
+            <Popconfirm
+              title="删除该质检记录"
+              okText="确认"
+              cancelText="取消"
+              onConfirm={() =>
+                void inspectTable.remove(record.id).then(
+                  () => message.success('已删除'),
+                  (error: unknown) => message.error(error instanceof Error ? error.message : '删除失败'),
+                )
+              }
+            >
+              <Button size="small" type="link" danger icon={<DeleteOutlined />}>
+                删除
+              </Button>
+            </Popconfirm>
+          </Space>
+        ),
     },
   ];
 
@@ -336,6 +359,7 @@ export default function ExportView() {
                 pagination={{ pageSize: 6 }}
                 columns={columns}
                 dataSource={[...inspectTable.rows].sort((a, b) => b.date.localeCompare(a.date))}
+                rowClassName={(record) => (record.frozen ? 'gb-row-frozen' : '')}
               />
             )}
           </Card>

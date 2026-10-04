@@ -78,7 +78,16 @@ export const useBodyStore = create<BodyStoreState>((set, get) => ({
 
   async createBody(draft) {
     const now = Date.now();
-    const row: Body = { ...draft, id: createId('body'), createdAt: now, updatedAt: now };
+    const row: Body = {
+      ...draft,
+      id: createId('body'),
+      frozen: false,
+      frozenByRecallId: null,
+      frozenAt: null,
+      frozenReason: null,
+      createdAt: now,
+      updatedAt: now,
+    };
     await db.bodies.put(row);
     await get().loadBodies();
     get().setCurrentBodyId(row.id);
@@ -86,11 +95,19 @@ export const useBodyStore = create<BodyStoreState>((set, get) => ({
   },
 
   async updateBody(id, patch) {
+    const target = get().bodies.find((body) => body.id === id);
+    if (target?.frozen) {
+      throw new Error(`胎体 ${target.code} 已被召回冻结，原值保留，禁止修改`);
+    }
     await db.bodies.update(id, { ...patch, updatedAt: Date.now() } as never);
     await get().loadBodies();
   },
 
   async removeBody(id) {
+    const target = get().bodies.find((body) => body.id === id);
+    if (target?.frozen) {
+      throw new Error(`胎体 ${target.code} 已被召回冻结，禁止删除`);
+    }
     await removeBodyCascade(id);
     if (get().currentBodyId === id) get().setCurrentBodyId(null);
     await get().loadBodies();
@@ -99,6 +116,7 @@ export const useBodyStore = create<BodyStoreState>((set, get) => ({
   async advanceBodyState(id) {
     const body = get().bodies.find((item) => item.id === id);
     if (!body) return;
+    if (body.frozen) throw new Error(`胎体 ${body.code} 已被召回冻结，禁止推进状态`);
     const next = nextBodyState(body.state);
     if (next === body.state) return;
     await get().updateBody(id, { state: next });

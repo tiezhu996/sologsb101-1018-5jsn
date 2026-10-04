@@ -2,6 +2,7 @@
  * 打磨推光（Polish）数据模型
  * 按道次登记的磨料目数与手法时长，未打磨完不许进入下一道罩漆。
  */
+import type { FreezableRecord } from './freeze';
 
 /** 手法：水砂 / 推光 / 揩清 */
 export type PolishMethod = 'water' | 'burnish' | 'wipe';
@@ -20,11 +21,19 @@ export interface Polish {
   durationMin: number;
   /** 操作人 */
   operator: string;
+  /** 召回冻结元数据（批次停用后冻结，原值保留） */
+  frozen: FreezableRecord['frozen'];
+  frozenByRecallId: FreezableRecord['frozenByRecallId'];
+  frozenAt: FreezableRecord['frozenAt'];
+  frozenReason: FreezableRecord['frozenReason'];
   createdAt: number;
   updatedAt: number;
 }
 
-export type PolishDraft = Omit<Polish, 'id' | 'createdAt' | 'updatedAt'>;
+export type PolishDraft = Omit<
+  Polish,
+  'id' | 'createdAt' | 'updatedAt' | 'frozen' | 'frozenByRecallId' | 'frozenAt' | 'frozenReason'
+>;
 
 export const POLISH_METHOD_LABEL: Record<PolishMethod, string> = {
   water: '水砂',

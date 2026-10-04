@@ -27,7 +27,11 @@ export interface UseIdbTableResult<T extends IdbRecord> {
   refresh: () => Promise<void>;
   getById: (id: string) => Promise<T | undefined>;
   list: () => Promise<T[]>;
-  create: (payload: Omit<T, 'id' | 'createdAt' | 'updatedAt'> & Partial<IdbRecord>, idPrefix?: string) => Promise<T>;
+  /**
+   * 新建记录。业务页面通常传 Draft（不含 id / 时间戳；
+   * 冻结等系统字段也由持久层补默认值），故 payload 仅要求是 T 的部分子集。
+   */
+  create: <P extends Partial<T>>(payload: P & { id?: string; createdAt?: number; updatedAt?: number }, idPrefix?: string) => Promise<T>;
   update: (id: string, patch: Partial<T>) => Promise<void>;
   upsert: (row: T) => Promise<void>;
   remove: (id: string) => Promise<void>;
@@ -91,8 +95,11 @@ export function useIdbTable<T extends IdbRecord>(
     };
   }, [refresh, sort, table]);
 
-  const create = useCallback<UseIdbTableResult<T>['create']>(
-    async (payload, idPrefix = 'row') => {
+  const create = useCallback(
+    async <P extends Partial<T>>(
+      payload: P & { id?: string; createdAt?: number; updatedAt?: number },
+      idPrefix = 'row',
+    ): Promise<T> => {
       const now = Date.now();
       const record = {
         ...(payload as object),

@@ -2,6 +2,7 @@
  * 胎体（Body）数据模型
  * 一件漆器的胎骨档案：材质、器型、主要尺寸与当前工序状态。
  */
+import type { FreezableRecord } from './freeze';
 
 /** 胎体材质：木胎 / 脱胎 / 金属胎 */
 export type BodyMaterial = 'wood' | 'lacquered' | 'metal';
@@ -27,11 +28,16 @@ export interface Body {
   ownerName: string;
   /** 当前状态 */
   state: BodyState;
+  /** 召回冻结元数据（批次停用后冻结，原值保留） */
+  frozen: FreezableRecord['frozen'];
+  frozenByRecallId: FreezableRecord['frozenByRecallId'];
+  frozenAt: FreezableRecord['frozenAt'];
+  frozenReason: FreezableRecord['frozenReason'];
   createdAt: number;
   updatedAt: number;
 }
 
-export type BodyDraft = Omit<Body, 'id' | 'createdAt' | 'updatedAt'>;
+export type BodyDraft = Omit<Body, 'id' | 'createdAt' | 'updatedAt' | 'frozen' | 'frozenByRecallId' | 'frozenAt' | 'frozenReason'>;
 
 export const BODY_MATERIAL_LABEL: Record<BodyMaterial, string> = {
   wood: '木胎',

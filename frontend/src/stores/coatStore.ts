@@ -60,24 +60,35 @@ export const useCoatStore = create<CoatStoreState>((set, get) => ({
 
   async createCoat(draft) {
     const now = Date.now();
-    const row: Coat = { ...draft, id: createId('coat'), createdAt: now, updatedAt: now };
+    const row: Coat = { ...draft, id: createId('coat'), frozen: false, frozenByRecallId: null, frozenAt: null, frozenReason: null, createdAt: now, updatedAt: now };
     await db.coats.put(row);
     await get().loadCoats();
     return row;
   },
 
   async updateCoat(id, patch) {
+    // 缓存未命中时直接查库，保证冻结判定不依赖页面是否已加载
+    const target = get().coats.find((coat) => coat.id === id) ?? (await db.coats.get(id));
+    if (target?.frozen) {
+      throw new Error(`第 ${target.seq} 道已被召回冻结，原值保留，禁止修改`);
+    }
     await db.coats.update(id, { ...patch, updatedAt: Date.now() } as never);
     await get().loadCoats();
   },
 
   async removeCoat(id) {
     const target = get().coats.find((coat) => coat.id === id);
+    if (target?.frozen) {
+      throw new Error(`第 ${target.seq} 道已被召回冻结，禁止删除`);
+    }
     await db.coats.delete(id);
     if (target) {
-      // 删除后按序重编号，保持 seq 连续
-      const rest = get()
-        .coats.filter((coat) => coat.bodyId === target.bodyId && coat.id !== id)
+      // 删除后按序重编号，保持 seq 连续；该胎体存在冻结道次时禁止删除（重编号会改动冻结原值）
+      const siblings = get().coats.filter((coat) => coat.bodyId === target.bodyId && coat.id !== id);
+      if (siblings.some((coat) => coat.frozen)) {
+        throw new Error('该胎体存在已召回冻结的道次，为保留冻结道次的原序号，禁止删除其他道次');
+      }
+      const rest = siblings
         .sort((a, b) => a.seq - b.seq)
         .map((coat, index) => ({ ...coat, seq: index + 1, updatedAt: Date.now() }));
       if (rest.length > 0) await db.coats.bulkPut(rest);
@@ -87,10 +98,13 @@ export const useCoatStore = create<CoatStoreState>((set, get) => ({
 
   async batchUpdate(ids, patch) {
     if (ids.length === 0) return;
+    const targets = get().coats.filter((coat) => ids.includes(coat.id));
+    const locked = targets.filter((coat) => coat.frozen);
+    if (locked.length > 0) {
+      throw new Error(`有 ${locked.length} 道已被召回冻结，禁止批量修改（已全部跳过）`);
+    }
     const now = Date.now();
-    const rows = get()
-      .coats.filter((coat) => ids.includes(coat.id))
-      .map((coat) => ({ ...coat, ...patch, updatedAt: now }));
+    const rows = targets.map((coat) => ({ ...coat, ...patch, updatedAt: now }));
     await db.coats.bulkPut(rows);
     await get().loadCoats();
   },
@@ -104,7 +118,9 @@ export const useCoatStore = create<CoatStoreState>((set, get) => ({
   },
 
   async markRecheck(bodyId, recheck) {
-    const affected = get().coats.filter((coat) => coat.bodyId === bodyId && coat.state !== 'done');
+    const affected = get().coats.filter(
+      (coat) => coat.bodyId === bodyId && coat.state !== 'done' && !coat.frozen,
+    );
     if (affected.length === 0) return;
     const now = Date.now();
     await db.coats.bulkPut(affected.map((coat) => ({ ...coat, needRecheck: recheck, updatedAt: now })));
@@ -112,6 +128,9 @@ export const useCoatStore = create<CoatStoreState>((set, get) => ({
   },
 
   async reorderCoats(bodyId, orderedIds) {
+    if (get().coats.some((coat) => coat.bodyId === bodyId && coat.frozen)) {
+      throw new Error('该胎体存在已召回冻结的道次，顺序与序号均已封存，禁止拖拽重排');
+    }
     const indexOf = new Map(orderedIds.map((id, index) => [id, index]));
     const rows = get()
       .coats.filter((coat) => coat.bodyId === bodyId)

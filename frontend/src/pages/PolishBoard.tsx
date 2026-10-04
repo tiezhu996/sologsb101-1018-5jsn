@@ -24,6 +24,7 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import { DeleteOutlined, EditOutlined, PlusOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import EmptyPanel from '@/components/common/EmptyPanel';
+import FrozenTag from '@/components/common/FrozenTag';
 import StatBadge from '@/components/common/StatBadge';
 import StageTag from '@/components/common/StageTag';
 import { useCoatProgress } from '@/hooks/useCoatProgress';
@@ -99,6 +100,10 @@ export default function PolishBoard() {
   };
 
   const openEdit = (row: Polish): void => {
+    if (row.frozen) {
+      message.warning('该打磨记录已被召回冻结，原值保留，禁止编辑');
+      return;
+    }
     setEditing(row);
     form.setFieldsValue({
       bodyId: row.bodyId,
@@ -113,21 +118,30 @@ export default function PolishBoard() {
 
   const submit = async (): Promise<void> => {
     const values = await form.validateFields();
-    if (editing) {
-      await polishTable.update(editing.id, values);
-      message.success('已更新打磨记录');
-    } else {
-      await polishTable.create(values, 'polish');
-      message.success('已新增打磨记录');
+    try {
+      if (editing) {
+        await polishTable.update(editing.id, values);
+        message.success('已更新打磨记录');
+      } else {
+        await polishTable.create(values, 'polish');
+        message.success('已新增打磨记录');
+      }
+      setOpen(false);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '保存失败');
     }
-    setOpen(false);
   };
 
-  /** 按道次生成目数序列：为每个尚无打磨记录的道次生成一条建议记录 */
+  /** 按道次生成目数序列：为每个尚无打磨记录的道次生成一条建议记录（冻结道次不处理） */
   const generateSequence = async (): Promise<void> => {
-    const targets = bodyCoats.filter((coat) => !rows.some((row) => row.seq === coat.seq));
+    const targets = bodyCoats.filter(
+      (coat) => !rows.some((row) => row.seq === coat.seq) && !coat.frozen,
+    );
+    const skipped = bodyCoats.filter(
+      (coat) => !rows.some((row) => row.seq === coat.seq) && coat.frozen,
+    ).length;
     if (targets.length === 0) {
-      message.info('所有道次均已有打磨记录');
+      message.info(skipped > 0 ? '剩余道次均已召回冻结，不再生成打磨记录' : '所有道次均已有打磨记录');
       return;
     }
     for (const coat of targets) {
@@ -148,13 +162,25 @@ export default function PolishBoard() {
 
   /** 打磨完成后把道次推进到已完成 */
   const finishPolish = async (row: Polish): Promise<void> => {
+    if (row.frozen) {
+      message.warning('该打磨记录已被召回冻结，禁止操作');
+      return;
+    }
     const coat = bodyCoats.find((item) => item.seq === row.seq);
     if (!coat) {
       message.warning('未找到对应道次');
       return;
     }
-    await updateCoat(coat.id, { state: 'done', needRecheck: false });
-    message.success(`第 ${row.seq} 道打磨完成，道次已置为已完成`);
+    if (coat.frozen) {
+      message.warning('对应道次已被召回冻结，状态原值保留');
+      return;
+    }
+    try {
+      await updateCoat(coat.id, { state: 'done', needRecheck: false });
+      message.success(`第 ${row.seq} 道打磨完成，道次已置为已完成`);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '回写道次失败');
+    }
   };
 
   const columns: ColumnsType<Polish> = [
@@ -167,7 +193,12 @@ export default function PolishBoard() {
         return coat ? <StageTag state={coat.state} seq={seq} needRecheck={coat.needRecheck} /> : `第 ${seq} 道`;
       },
     },
-    { title: '磨料目数', dataIndex: 'grit', width: 110, render: (value: number) => <Tag color="gold">{value} 目</Tag> },
+    { title: '磨料目数', dataIndex: 'grit', width: 110, render: (value: number, record) => (
+      <Space size={4}>
+        <Tag color="gold">{value} 目</Tag>
+        <FrozenTag frozen={record.frozen} reason={record.frozenReason} size="small" />
+      </Space>
+    ) },
     {
       title: '手法',
       dataIndex: 'method',
@@ -180,28 +211,38 @@ export default function PolishBoard() {
       title: '操作',
       key: 'action',
       width: 250,
-      render: (_value, record) => (
-        <Space size={4} wrap>
-          <Tooltip title="打磨完成并回写道次状态">
-            <Button size="small" type="link" onClick={() => void finishPolish(record)}>
-              完成打磨
+      render: (_value, record) =>
+        record.frozen ? (
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            召回冻结 · 原值保留
+          </Typography.Text>
+        ) : (
+          <Space size={4} wrap>
+            <Tooltip title="打磨完成并回写道次状态">
+              <Button size="small" type="link" onClick={() => void finishPolish(record)}>
+                完成打磨
+              </Button>
+            </Tooltip>
+            <Button size="small" type="link" icon={<EditOutlined />} onClick={() => openEdit(record)}>
+              编辑
             </Button>
-          </Tooltip>
-          <Button size="small" type="link" icon={<EditOutlined />} onClick={() => openEdit(record)}>
-            编辑
-          </Button>
-          <Popconfirm
-            title="删除该打磨记录"
-            okText="确认"
-            cancelText="取消"
-            onConfirm={() => void polishTable.remove(record.id).then(() => message.success('已删除'))}
-          >
-            <Button size="small" type="link" danger icon={<DeleteOutlined />}>
-              删除
-            </Button>
-          </Popconfirm>
-        </Space>
-      ),
+            <Popconfirm
+              title="删除该打磨记录"
+              okText="确认"
+              cancelText="取消"
+              onConfirm={() =>
+                void polishTable.remove(record.id).then(
+                  () => message.success('已删除'),
+                  (error: unknown) => message.error(error instanceof Error ? error.message : '删除失败'),
+                )
+              }
+            >
+              <Button size="small" type="link" danger icon={<DeleteOutlined />}>
+                删除
+              </Button>
+            </Popconfirm>
+          </Space>
+        ),
     },
   ];
 
@@ -268,7 +309,14 @@ export default function PolishBoard() {
             size="small"
           />
         ) : (
-          <Table<Polish> rowKey="id" size="small" pagination={{ pageSize: 8 }} columns={columns} dataSource={rows} />
+          <Table<Polish>
+            rowKey="id"
+            size="small"
+            pagination={{ pageSize: 8 }}
+            columns={columns}
+            dataSource={rows}
+            rowClassName={(record) => (record.frozen ? 'gb-row-frozen' : '')}
+          />
         )}
       </Card>
 

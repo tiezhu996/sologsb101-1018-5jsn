@@ -1,7 +1,9 @@
 /**
  * 镶嵌（Inlay）数据模型
  * 螺钿、蛋壳、描金、戗金等纹饰的登记，叠加显示于器型示意区。
+ * 镶嵌工序同样领用漆料（粘固 / 描金漆），记录漆料批次用于追溯与召回。
  */
+import { UNTRACED_BATCH_ID, type FreezableRecord } from './freeze';
 
 /** 镶嵌类型 */
 export type InlayType = 'nacre' | 'eggshell' | 'goldTrace' | 'incisedGold';
@@ -18,11 +20,21 @@ export interface Inlay {
   position: string;
   /** 材料与工艺备注 */
   materialNote: string;
+  /** 粘固 / 描金所用漆料批次 id；旧数据无批次时为 UNTRACED_BATCH_ID（未追溯） */
+  batchId: string;
+  /** 召回冻结元数据（批次停用后冻结，原值保留） */
+  frozen: FreezableRecord['frozen'];
+  frozenByRecallId: FreezableRecord['frozenByRecallId'];
+  frozenAt: FreezableRecord['frozenAt'];
+  frozenReason: FreezableRecord['frozenReason'];
   createdAt: number;
   updatedAt: number;
 }
 
-export type InlayDraft = Omit<Inlay, 'id' | 'createdAt' | 'updatedAt'>;
+export type InlayDraft = Omit<
+  Inlay,
+  'id' | 'createdAt' | 'updatedAt' | 'frozen' | 'frozenByRecallId' | 'frozenAt' | 'frozenReason'
+>;
 
 export const INLAY_TYPE_LABEL: Record<InlayType, string> = {
   nacre: '螺钿',
@@ -70,5 +82,6 @@ export function createEmptyInlayDraft(bodyId: string): InlayDraft {
     pattern: '缠枝莲',
     position: '外壁',
     materialNote: '',
+    batchId: UNTRACED_BATCH_ID,
   };
 }

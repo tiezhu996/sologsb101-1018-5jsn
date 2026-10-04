@@ -2,6 +2,7 @@
  * 成品质检（Inspect）数据模型
  * 判定返工时需定位到具体道次与荫房记录，并生成返工清单。
  */
+import type { FreezableRecord } from './freeze';
 
 /** 质检结论：合格 / 返工 */
 export type InspectVerdict = 'pass' | 'rework';
@@ -22,11 +23,19 @@ export interface Inspect {
   defectCoatSeq: number | null;
   /** 返工时定位到的荫房记录 id，无则 null */
   defectRoomId: string | null;
+  /** 召回冻结元数据（批次停用后冻结，原值保留） */
+  frozen: FreezableRecord['frozen'];
+  frozenByRecallId: FreezableRecord['frozenByRecallId'];
+  frozenAt: FreezableRecord['frozenAt'];
+  frozenReason: FreezableRecord['frozenReason'];
   createdAt: number;
   updatedAt: number;
 }
 
-export type InspectDraft = Omit<Inspect, 'id' | 'createdAt' | 'updatedAt'>;
+export type InspectDraft = Omit<
+  Inspect,
+  'id' | 'createdAt' | 'updatedAt' | 'frozen' | 'frozenByRecallId' | 'frozenAt' | 'frozenReason'
+>;
 
 export const INSPECT_VERDICT_LABEL: Record<InspectVerdict, string> = {
   pass: '合格',

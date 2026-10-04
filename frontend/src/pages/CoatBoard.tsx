@@ -31,11 +31,14 @@ import {
 } from '@ant-design/icons';
 import EmptyPanel from '@/components/common/EmptyPanel';
 import FilterBar, { useFilterQuery, type FilterSelectConfig } from '@/components/common/FilterBar';
+import FrozenTag from '@/components/common/FrozenTag';
 import StatBadge from '@/components/common/StatBadge';
 import StageTag from '@/components/common/StageTag';
 import { useCoatProgress } from '@/hooks/useCoatProgress';
 import { useBodyStore } from '@/stores/bodyStore';
 import { useCoatStore } from '@/stores/coatStore';
+import { usePaintStore } from '@/stores/paintStore';
+import { UNTRACED_BATCH_ID, UNTRACED_BATCH_LABEL } from '@/types/freeze';
 import {
   COAT_STATE_LABEL,
   COAT_STATE_OPTIONS,
@@ -74,6 +77,12 @@ export default function CoatBoard() {
   const reorderCoats = useCoatStore((state) => state.reorderCoats);
   const nextSeq = useCoatStore((state) => state.nextSeq);
   const suggestForBody = useCoatStore((state) => state.suggestForBody);
+
+  const batches = usePaintStore((state) => state.batches);
+  const loadPaint = usePaintStore((state) => state.loadPaint);
+  useEffect(() => {
+    void loadPaint();
+  }, [loadPaint]);
 
   const { progressOf, currentCoatText, totals } = useCoatProgress();
   const url = useFilterQuery(FILTER_KEYS);
@@ -125,11 +134,16 @@ export default function CoatBoard() {
     form.setFieldsValue({
       ...createEmptyCoatDraft(bodyId, nextSeq(bodyId)),
       paintType: suggestion?.paintType ?? 'raw',
+      batchId: UNTRACED_BATCH_ID,
     });
     setOpen(true);
   };
 
   const openEdit = (coat: Coat): void => {
+    if (coat.frozen) {
+      message.warning('该道次已被召回冻结，原值保留，禁止编辑');
+      return;
+    }
     setEditing(coat);
     form.setFieldsValue({
       bodyId: coat.bodyId,
@@ -140,6 +154,7 @@ export default function CoatBoard() {
       thicknessUm: coat.thicknessUm,
       state: coat.state,
       needRecheck: coat.needRecheck,
+      batchId: coat.batchId,
     });
     setOpen(true);
   };
@@ -147,14 +162,18 @@ export default function CoatBoard() {
   const submit = async (): Promise<void> => {
     const values = await form.validateFields();
     const payload: CoatDraft = { ...values };
-    if (editing) {
-      await updateCoat(editing.id, payload);
-      message.success(`已更新第 ${payload.seq} 道工序`);
-    } else {
-      await createCoat(payload);
-      message.success(`已新增第 ${payload.seq} 道工序`);
+    try {
+      if (editing) {
+        await updateCoat(editing.id, payload);
+        message.success(`已更新第 ${payload.seq} 道工序`);
+      } else {
+        await createCoat(payload);
+        message.success(`已新增第 ${payload.seq} 道工序`);
+      }
+      setOpen(false);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '保存失败');
     }
-    setOpen(false);
   };
 
   /** 拖拽重排：按落点重排并落库重编号 */
@@ -173,19 +192,37 @@ export default function CoatBoard() {
     }
     const [moved] = ids.splice(from, 1);
     ids.splice(to, 0, moved as string);
-    await reorderCoats(bodyId, ids);
-    setDragId(null);
-    message.success('道次顺序已更新并重编号');
+    try {
+      await reorderCoats(bodyId, ids);
+      setDragId(null);
+      message.success('道次顺序已更新并重编号');
+    } catch (error) {
+      setDragId(null);
+      message.error(error instanceof Error ? error.message : '重排失败');
+    }
   };
 
   /** 状态推进校验：前一道未完成时禁止进入下一道 */
   const handleAdvance = async (coat: Coat): Promise<void> => {
+    if (coat.frozen) {
+      message.warning('该道次已被召回冻结，禁止推进状态');
+      return;
+    }
     const previous = bodyCoats.find((item) => item.seq === coat.seq - 1);
     if (previous && previous.state !== 'done') {
       message.warning(`第 ${previous.seq} 道尚未完成，禁止进入第 ${coat.seq} 道`);
       return;
     }
-    await advanceState(coat.id);
+    try {
+      await advanceState(coat.id);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '推进失败');
+    }
+  };
+
+  const batchLabel = (batchId: string): string => {
+    if (batchId === UNTRACED_BATCH_ID) return UNTRACED_BATCH_LABEL;
+    return batches.find((batch) => batch.id === batchId)?.batchNo ?? batchId;
   };
 
   const columns: ColumnsType<Coat> = [
@@ -193,21 +230,28 @@ export default function CoatBoard() {
       title: '',
       dataIndex: 'drag',
       width: 44,
-      render: (_value, record) => (
-        <Tooltip title="按住拖动可调整道次先后">
-          <span
-            className="gb-drag-handle"
-            draggable
-            onDragStart={() => setDragId(record.id)}
-            onDragEnd={() => {
-              setDragId(null);
-              setOverId(null);
-            }}
-          >
-            <HolderOutlined />
-          </span>
-        </Tooltip>
-      ),
+      render: (_value, record) =>
+        record.frozen ? (
+          <Tooltip title="召回冻结：序号已封存，不可拖动">
+            <span className="gb-drag-handle is-disabled">
+              <HolderOutlined />
+            </span>
+          </Tooltip>
+        ) : (
+          <Tooltip title="按住拖动可调整道次先后">
+            <span
+              className="gb-drag-handle"
+              draggable
+              onDragStart={() => setDragId(record.id)}
+              onDragEnd={() => {
+                setDragId(null);
+                setOverId(null);
+              }}
+            >
+              <HolderOutlined />
+            </span>
+          </Tooltip>
+        ),
     },
     {
       title: '道次',
@@ -219,6 +263,17 @@ export default function CoatBoard() {
       ),
     },
     { title: '漆种', dataIndex: 'paintType', width: 100, render: (value: PaintType) => <Tag>{PAINT_TYPE_LABEL[value]}</Tag> },
+    {
+      title: '漆料批次',
+      dataIndex: 'batchId',
+      width: 130,
+      render: (value: string, record) => (
+        <Space size={4} wrap>
+          <Tag color={value === UNTRACED_BATCH_ID ? 'default' : 'gold'}>{batchLabel(value)}</Tag>
+          <FrozenTag frozen={record.frozen} reason={record.frozenReason} size="small" />
+        </Space>
+      ),
+    },
     { title: '色名', dataIndex: 'colorName', width: 120 },
     { title: '涂刷日期', dataIndex: 'coatDate', width: 130, sorter: (a, b) => a.coatDate.localeCompare(b.coatDate) },
     {
@@ -231,27 +286,37 @@ export default function CoatBoard() {
       title: '操作',
       key: 'action',
       width: 220,
-      render: (_value, record) => (
-        <Space size={4} wrap>
-          <Button size="small" type="link" onClick={() => void handleAdvance(record)}>
-            推进状态
-          </Button>
-          <Button size="small" type="link" icon={<EditOutlined />} onClick={() => openEdit(record)}>
-            编辑
-          </Button>
-          <Popconfirm
-            title="删除该道次"
-            description="删除后其余道次会自动重编号。"
-            okText="确认"
-            cancelText="取消"
-            onConfirm={() => void removeCoat(record.id).then(() => message.success('已删除该道次'))}
-          >
-            <Button size="small" type="link" danger icon={<DeleteOutlined />}>
-              删除
+      render: (_value, record) =>
+        record.frozen ? (
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            召回冻结 · 原值保留
+          </Typography.Text>
+        ) : (
+          <Space size={4} wrap>
+            <Button size="small" type="link" onClick={() => void handleAdvance(record)}>
+              推进状态
             </Button>
-          </Popconfirm>
-        </Space>
-      ),
+            <Button size="small" type="link" icon={<EditOutlined />} onClick={() => openEdit(record)}>
+              编辑
+            </Button>
+            <Popconfirm
+              title="删除该道次"
+              description="删除后其余道次会自动重编号。"
+              okText="确认"
+              cancelText="取消"
+              onConfirm={() =>
+                void removeCoat(record.id).then(
+                  () => message.success('已删除该道次'),
+                  (error: unknown) => message.error(error instanceof Error ? error.message : '删除失败'),
+                )
+              }
+            >
+              <Button size="small" type="link" danger icon={<DeleteOutlined />}>
+                删除
+              </Button>
+            </Popconfirm>
+          </Space>
+        ),
     },
   ];
 
@@ -331,10 +396,13 @@ export default function CoatBoard() {
               size="small"
               disabled={selectedIds.length === 0}
               onClick={() =>
-                void batchUpdate(selectedIds, { paintType: batchPaint }).then(() => {
-                  message.success(`已批量改为${PAINT_TYPE_LABEL[batchPaint]}`);
-                  setSelectedIds([]);
-                })
+                void batchUpdate(selectedIds, { paintType: batchPaint }).then(
+                  () => {
+                    message.success(`已批量改为${PAINT_TYPE_LABEL[batchPaint]}`);
+                    setSelectedIds([]);
+                  },
+                  (error: unknown) => message.error(error instanceof Error ? error.message : '批量修改失败'),
+                )
               }
             >
               批量改漆种
@@ -350,10 +418,13 @@ export default function CoatBoard() {
               size="small"
               disabled={selectedIds.length === 0}
               onClick={() =>
-                void batchUpdate(selectedIds, { state: batchState }).then(() => {
-                  message.success(`已批量改为${COAT_STATE_LABEL[batchState]}`);
-                  setSelectedIds([]);
-                })
+                void batchUpdate(selectedIds, { state: batchState }).then(
+                  () => {
+                    message.success(`已批量改为${COAT_STATE_LABEL[batchState]}`);
+                    setSelectedIds([]);
+                  },
+                  (error: unknown) => message.error(error instanceof Error ? error.message : '批量修改失败'),
+                )
               }
             >
               批量改状态
@@ -395,8 +466,11 @@ export default function CoatBoard() {
             rowSelection={{
               selectedRowKeys: selectedIds,
               onChange: (keys) => setSelectedIds(keys.map((key) => String(key))),
+              getCheckboxProps: (record) => ({ disabled: record.frozen }),
             }}
-            rowClassName={(record) => (record.id === dragId ? 'gb-row-dragging' : '')}
+            rowClassName={(record) =>
+              `${record.id === dragId ? 'gb-row-dragging' : ''} ${record.frozen ? 'gb-row-frozen' : ''}`
+            }
           />
         )}
       </Card>
@@ -448,6 +522,27 @@ export default function CoatBoard() {
               options={[
                 { value: false, label: '正常' },
                 { value: true, label: '待复检（荫房异常）' },
+              ]}
+            />
+          </Form.Item>
+          <Form.Item
+            name="batchId"
+            label="所用漆料批次"
+            tooltip="旧记录无批次时显示「未追溯」；正式领用请到「漆料与召回」页登记用量并扣减台账"
+            rules={[{ required: true, message: '请选择漆料批次或标记为未追溯' }]}
+          >
+            <Select
+              showSearch
+              optionFilterProp="label"
+              options={[
+                { value: UNTRACED_BATCH_ID, label: `${UNTRACED_BATCH_LABEL}（旧数据无批次）` },
+                ...batches.map((batch) => ({
+                    value: batch.id,
+                    label: `${batch.batchNo} · ${PAINT_TYPE_LABEL[batch.kind]} · ${batch.colorName}（余 ${batch.remainingQty} ${batch.unit}${
+                      batch.status === 'inactive' ? ' · 已停用' : ''
+                    }）`,
+                    disabled: batch.status === 'inactive',
+                  })),
               ]}
             />
           </Form.Item>

@@ -25,6 +25,7 @@ import {
 import { DeleteOutlined, EditOutlined, PlusOutlined, RightCircleOutlined } from '@ant-design/icons';
 import EmptyPanel from '@/components/common/EmptyPanel';
 import FilterBar, { useFilterQuery, type FilterSelectConfig } from '@/components/common/FilterBar';
+import FrozenTag from '@/components/common/FrozenTag';
 import StatBadge from '@/components/common/StatBadge';
 import StageTag from '@/components/common/StageTag';
 import { useCoatProgress } from '@/hooks/useCoatProgress';
@@ -95,6 +96,10 @@ export default function BodyList() {
   };
 
   const openEdit = (body: Body): void => {
+    if (body.frozen) {
+      message.warning(`胎体 ${body.code} 已被召回冻结，原值保留，禁止编辑`);
+      return;
+    }
     setEditing(body);
     form.setFieldsValue({
       code: body.code,
@@ -109,19 +114,27 @@ export default function BodyList() {
 
   const submit = async (): Promise<void> => {
     const values = await form.validateFields();
-    if (editing) {
-      await updateBody(editing.id, values);
-      message.success(`已更新胎体 ${values.code}`);
-    } else {
-      const created = await createBody(values);
-      message.success(`已新建胎体 ${created.code}，可进入道次编排`);
+    try {
+      if (editing) {
+        await updateBody(editing.id, values);
+        message.success(`已更新胎体 ${values.code}`);
+      } else {
+        const created = await createBody(values);
+        message.success(`已新建胎体 ${created.code}，可进入道次编排`);
+      }
+      setOpen(false);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '保存失败');
     }
-    setOpen(false);
   };
 
   const handleRemove = async (body: Body): Promise<void> => {
-    await removeBody(body.id);
-    message.success(`已删除胎体 ${body.code} 及其关联记录`);
+    try {
+      await removeBody(body.id);
+      message.success(`已删除胎体 ${body.code} 及其关联记录`);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '删除失败');
+    }
   };
 
   const inlayTotal = inlayTable.rows.length;
@@ -190,6 +203,7 @@ export default function BodyList() {
                       <Space size={6} wrap>
                         <Tag color="#8c2f1f">{body.code}</Tag>
                         <StageTag state={body.state} needRecheck={recheck} />
+                        <FrozenTag frozen={body.frozen} reason={body.frozenReason} size="small" />
                       </Space>
                     }
                     extra={
@@ -224,25 +238,40 @@ export default function BodyList() {
                         荫干等待 {stat.dryingHours} 小时 · 荫房超标 {stat.roomOverCount} 次
                       </Typography.Text>
                       <Space size={4} wrap onClick={(event) => event.stopPropagation()}>
-                        <Tooltip title="按 待髹涂 → 髹涂中 → 待荫干 → 已完成 推进">
-                          <Button size="small" onClick={() => void advanceBodyState(body.id)}>
-                            推进状态
-                          </Button>
-                        </Tooltip>
-                        <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(body)}>
-                          编辑
-                        </Button>
-                        <Popconfirm
-                          title="删除胎体"
-                          description="将同时删除其道次、荫房、打磨、镶嵌与质检记录，不可恢复。"
-                          okText="确认删除"
-                          cancelText="取消"
-                          onConfirm={() => void handleRemove(body)}
-                        >
-                          <Button size="small" danger icon={<DeleteOutlined />}>
-                            删除
-                          </Button>
-                        </Popconfirm>
+                        {body.frozen ? (
+                          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                            召回冻结 · 原值保留
+                          </Typography.Text>
+                        ) : (
+                          <>
+                            <Tooltip title="按 待髹涂 → 髹涂中 → 待荫干 → 已完成 推进">
+                              <Button
+                                size="small"
+                                onClick={() =>
+                                  void advanceBodyState(body.id).then(undefined, (error: unknown) =>
+                                    message.error(error instanceof Error ? error.message : '推进失败'),
+                                  )
+                                }
+                              >
+                                推进状态
+                              </Button>
+                            </Tooltip>
+                            <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(body)}>
+                              编辑
+                            </Button>
+                            <Popconfirm
+                              title="删除胎体"
+                              description="将同时删除其道次、荫房、打磨、镶嵌与质检记录，不可恢复。"
+                              okText="确认删除"
+                              cancelText="取消"
+                              onConfirm={() => void handleRemove(body)}
+                            >
+                              <Button size="small" danger icon={<DeleteOutlined />}>
+                                删除
+                              </Button>
+                            </Popconfirm>
+                          </>
+                        )}
                       </Space>
                     </Space>
                   </Card>
