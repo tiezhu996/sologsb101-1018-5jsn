@@ -13,12 +13,16 @@ import {
   ExportOutlined,
   FormatPainterOutlined,
   HighlightOutlined,
+  NotificationOutlined,
+  ProfileOutlined,
 } from '@ant-design/icons';
 import { ROUTES } from './router';
-import { useBodyStore } from './stores/bodyStore';
-import { useCoatStore } from './stores/coatStore';
+import { useBodyStore, subscribeBodiesLive } from './stores/bodyStore';
+import { useCoatStore, subscribeCoatsLive } from './stores/coatStore';
 import { useRoomStore } from './stores/roomStore';
+import { usePaintStore, subscribePaintLive } from './stores/paintStore';
 import { initDatabase } from './utils/db';
+import { resumePendingRecalls } from './utils/recall';
 import { BODY_MATERIAL_LABEL, BODY_SHAPE_LABEL, BODY_STATE_LABEL } from './types/body';
 
 const { Header, Sider, Content, Footer } = Layout;
@@ -35,6 +39,14 @@ export default function App() {
   const loadCoats = useCoatStore((state) => state.loadCoats);
   const rooms = useRoomStore((state) => state.rooms);
   const loadRooms = useRoomStore((state) => state.loadRooms);
+  const loadPaint = usePaintStore((state) => state.loadPaint);
+  const pendingRecalls = usePaintStore((state) => state.recalls.filter((recall) => recall.status === 'pending').length);
+
+  // 订阅漆料三表：其他标签页领用 / 冻结后本标签页即时刷新库存与召回状态
+  useEffect(() => {
+    const unsubs = [subscribeBodiesLive(), subscribeCoatsLive(), subscribePaintLive()];
+    return () => unsubs.forEach((unsub) => unsub());
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -42,7 +54,12 @@ export default function App() {
       try {
         await initDatabase();
         if (cancelled) return;
-        await Promise.all([loadBodies(), loadCoats(), loadRooms()]);
+        await Promise.all([loadBodies(), loadCoats(), loadRooms(), loadPaint()]);
+        if (cancelled) return;
+        // 重启后继续处理停留 pending 的召回单（单事务续冻结，无半套标记）
+        await resumePendingRecalls();
+        if (cancelled) return;
+        await loadPaint();
       } catch (error) {
         if (cancelled) return;
         message.error(`本地数据库初始化失败：${error instanceof Error ? error.message : '未知错误'}`);
@@ -51,7 +68,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [loadBodies, loadCoats, loadRooms, message]);
+  }, [loadBodies, loadCoats, loadRooms, loadPaint, message]);
 
   const currentBody = bodies.find((body) => body.id === currentBodyId) ?? null;
   const selectedKey = location.pathname.startsWith('/coats')
@@ -62,9 +79,13 @@ export default function App() {
         ? ROUTES.polish
         : location.pathname.startsWith('/inlays')
           ? ROUTES.inlays
-          : location.pathname.startsWith('/export')
-            ? ROUTES.export
-            : ROUTES.bodies;
+          : location.pathname.startsWith('/paint')
+            ? ROUTES.paint
+            : location.pathname.startsWith('/recall')
+              ? ROUTES.recall
+              : location.pathname.startsWith('/export')
+                ? ROUTES.export
+                : ROUTES.bodies;
 
   return (
     <Layout style={{ minHeight: '100vh', background: 'transparent' }}>
@@ -89,6 +110,21 @@ export default function App() {
             { key: ROUTES.rooms, icon: <CloudOutlined />, label: '荫房记录' },
             { key: ROUTES.polish, icon: <BgColorsOutlined />, label: '打磨推光' },
             { key: ROUTES.inlays, icon: <HighlightOutlined />, label: '镶嵌纹饰' },
+            { key: ROUTES.paint, icon: <ProfileOutlined />, label: '漆料台账' },
+            {
+              key: ROUTES.recall,
+              icon: <NotificationOutlined />,
+              label: (
+                <span>
+                  批次召回
+                  {pendingRecalls > 0 ? (
+                    <Tag color="warning" style={{ marginInlineStart: 6 }}>
+                      待冻结 {pendingRecalls}
+                    </Tag>
+                  ) : null}
+                </span>
+              ),
+            },
             { key: ROUTES.export, icon: <ExportOutlined />, label: '质检与导出' },
           ]}
         />

@@ -3,9 +3,11 @@
  * 维护胎体列表、当前选中胎体与列表筛选条件；跨页状态不留在组件内。
  */
 import { create } from 'zustand';
+import { liveQuery } from 'dexie';
 import { db, createId, readUiPrefs, writeUiPrefs, removeBodyCascade } from '@/utils/db';
 import type { Body, BodyDraft, BodyMaterial, BodyShape } from '@/types/body';
 import { nextBodyState } from '@/types/body';
+import { assertNotFrozen } from '@/utils/freezeGuard';
 
 export interface BodyFilters {
   keyword: string;
@@ -86,11 +88,13 @@ export const useBodyStore = create<BodyStoreState>((set, get) => ({
   },
 
   async updateBody(id, patch) {
+    assertNotFrozen(get().bodies.find((body) => body.id === id), '该胎体');
     await db.bodies.update(id, { ...patch, updatedAt: Date.now() } as never);
     await get().loadBodies();
   },
 
   async removeBody(id) {
+    assertNotFrozen(get().bodies.find((body) => body.id === id), '该胎体');
     await removeBodyCascade(id);
     if (get().currentBodyId === id) get().setCurrentBodyId(null);
     await get().loadBodies();
@@ -121,4 +125,13 @@ export function selectFilteredBodies(bodies: Body[], filters: BodyFilters): Body
     if (filters.shapes.length > 0 && !filters.shapes.includes(body.shape)) return false;
     return true;
   });
+}
+
+/** 订阅胎体表（含其他标签页的召回冻结），返回取消订阅函数 */
+export function subscribeBodiesLive(): () => void {
+  const sub = liveQuery(() => db.bodies.orderBy('updatedAt').reverse().toArray()).subscribe({
+    next: (bodies) => useBodyStore.setState({ bodies }),
+    error: () => undefined,
+  });
+  return () => sub.unsubscribe();
 }

@@ -27,6 +27,8 @@ import EmptyPanel from '@/components/common/EmptyPanel';
 import FilterBar, { useFilterQuery, type FilterSelectConfig } from '@/components/common/FilterBar';
 import StatBadge from '@/components/common/StatBadge';
 import StageTag from '@/components/common/StageTag';
+import FrozenBadge from '@/components/common/FrozenBadge';
+import { isFrozen } from '@/types/frozen';
 import { useCoatProgress } from '@/hooks/useCoatProgress';
 import { useIdbTable } from '@/hooks/useIdbTable';
 import { ROUTES } from '@/router';
@@ -38,6 +40,7 @@ import {
   BODY_MATERIAL_OPTIONS,
   BODY_SHAPE_LABEL,
   BODY_SHAPE_OPTIONS,
+  BODY_STATE_LABEL,
   BODY_STATE_OPTIONS,
   createEmptyBodyDraft,
   type Body,
@@ -224,25 +227,34 @@ export default function BodyList() {
                         荫干等待 {stat.dryingHours} 小时 · 荫房超标 {stat.roomOverCount} 次
                       </Typography.Text>
                       <Space size={4} wrap onClick={(event) => event.stopPropagation()}>
-                        <Tooltip title="按 待髹涂 → 髹涂中 → 待荫干 → 已完成 推进">
-                          <Button size="small" onClick={() => void advanceBodyState(body.id)}>
-                            推进状态
-                          </Button>
-                        </Tooltip>
-                        <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(body)}>
-                          编辑
-                        </Button>
-                        <Popconfirm
-                          title="删除胎体"
-                          description="将同时删除其道次、荫房、打磨、镶嵌与质检记录，不可恢复。"
-                          okText="确认删除"
-                          cancelText="取消"
-                          onConfirm={() => void handleRemove(body)}
-                        >
-                          <Button size="small" danger icon={<DeleteOutlined />}>
-                            删除
-                          </Button>
-                        </Popconfirm>
+                        {isFrozen(body) ? (
+                          <FrozenBadge
+                            record={body}
+                            originalText={BODY_STATE_LABEL[body.frozenOriginalState as Body['state']] ?? '原状态'}
+                          />
+                        ) : (
+                          <>
+                            <Tooltip title="按 待髹涂 → 髹涂中 → 待荫干 → 已完成 推进">
+                              <Button size="small" onClick={() => void advanceBodyState(body.id)}>
+                                推进状态
+                              </Button>
+                            </Tooltip>
+                            <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(body)}>
+                              编辑
+                            </Button>
+                            <Popconfirm
+                              title="删除胎体"
+                              description="将同时删除其道次、荫房、打磨、镶嵌与质检记录，不可恢复。"
+                              okText="确认删除"
+                              cancelText="取消"
+                              onConfirm={() => void handleRemove(body)}
+                            >
+                              <Button size="small" danger icon={<DeleteOutlined />}>
+                                删除
+                              </Button>
+                            </Popconfirm>
+                          </>
+                        )}
                       </Space>
                     </Space>
                   </Card>

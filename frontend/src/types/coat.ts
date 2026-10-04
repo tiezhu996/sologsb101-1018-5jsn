@@ -2,14 +2,15 @@
  * 髹涂道次（Coat）数据模型
  * 一件胎体上的逐道髹涂记录：漆种、色名、涂刷日期、湿膜厚度与状态推进。
  */
+import type { FrozenMeta } from './frozen';
 
 /** 漆种：生漆 / 色漆 / 罩漆 */
 export type PaintType = 'raw' | 'color' | 'topcoat';
 
-/** 道次状态：待涂 / 已涂 / 待打磨 / 已完成 */
-export type CoatState = 'todo' | 'coated' | 'toPolish' | 'done';
+/** 道次状态：待涂 / 已涂 / 待打磨 / 已完成 / 已召回（批次停用冻结，保留原值） */
+export type CoatState = 'todo' | 'coated' | 'toPolish' | 'done' | 'recalled';
 
-export interface Coat {
+export interface Coat extends FrozenMeta {
   id: string;
   /** 所属胎体 id */
   bodyId: string;
@@ -27,6 +28,11 @@ export interface Coat {
   state: CoatState;
   /** 荫房判定异常时回写的「待复检」标记 */
   needRecheck: boolean;
+  /**
+   * 使用的漆料批次 id；旧数据没有批次时为「未追溯」常量（UNTRACED_BATCH_ID）。
+   * 批次停用召回据此圈定受影响道次。
+   */
+  paintBatchId: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -44,6 +50,7 @@ export const COAT_STATE_LABEL: Record<CoatState, string> = {
   coated: '已涂',
   toPolish: '待打磨',
   done: '已完成',
+  recalled: '已召回',
 };
 
 export const COAT_STATE_COLOR: Record<CoatState, string> = {
@@ -51,9 +58,11 @@ export const COAT_STATE_COLOR: Record<CoatState, string> = {
   coated: '#c9963c',
   toPolish: '#8c2f1f',
   done: '#2f6f4f',
+  recalled: '#b03a2e',
 };
 
-export const COAT_STATE_FLOW: readonly CoatState[] = ['todo', 'coated', 'toPolish', 'done'];
+/** 正常状态推进链路；召回冻结态不参与流转 */
+export const COAT_STATE_FLOW: readonly Exclude<CoatState, 'recalled'>[] = ['todo', 'coated', 'toPolish', 'done'];
 
 export const PAINT_TYPE_OPTIONS: ReadonlyArray<{ value: PaintType; label: string }> = [
   { value: 'raw', label: '生漆' },
@@ -76,12 +85,13 @@ export const COLOR_NAME_OPTIONS: readonly string[] = [
 ];
 
 export function nextCoatState(state: CoatState): CoatState {
+  if (state === 'recalled') return state;
   const index = COAT_STATE_FLOW.indexOf(state);
   if (index < 0 || index >= COAT_STATE_FLOW.length - 1) return state;
   return COAT_STATE_FLOW[index + 1] as CoatState;
 }
 
-export function createEmptyCoatDraft(bodyId: string, seq: number): CoatDraft {
+export function createEmptyCoatDraft(bodyId: string, seq: number, paintBatchId = ''): CoatDraft {
   return {
     bodyId,
     seq,
@@ -91,5 +101,6 @@ export function createEmptyCoatDraft(bodyId: string, seq: number): CoatDraft {
     thicknessUm: 40,
     state: 'todo',
     needRecheck: false,
+    paintBatchId,
   };
 }

@@ -33,10 +33,13 @@ import {
 } from '@ant-design/icons';
 import EmptyPanel from '@/components/common/EmptyPanel';
 import StatBadge from '@/components/common/StatBadge';
+import FrozenBadge from '@/components/common/FrozenBadge';
+import { isFrozen } from '@/types/frozen';
 import { useIdbTable } from '@/hooks/useIdbTable';
 import { useBodyStore } from '@/stores/bodyStore';
 import { useCoatStore } from '@/stores/coatStore';
 import { useRoomStore } from '@/stores/roomStore';
+import { usePaintStore } from '@/stores/paintStore';
 import { COAT_STATE_LABEL, PAINT_TYPE_LABEL } from '@/types/coat';
 import { BODY_SHAPE_LABEL } from '@/types/body';
 import { ROOM_VERDICT_LABEL } from '@/types/room';
@@ -74,6 +77,7 @@ export default function ExportView() {
   const loadCoats = useCoatStore((state) => state.loadCoats);
   const rooms = useRoomStore((state) => state.rooms);
   const loadRooms = useRoomStore((state) => state.loadRooms);
+  const loadPaint = usePaintStore((state) => state.loadPaint);
 
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Inspect | null>(null);
@@ -132,9 +136,17 @@ export default function ExportView() {
       defectRoomId: values.verdict === 'rework' ? (values.defectRoomId ?? null) : null,
     };
     if (editing) {
+      if (isFrozen(editing)) {
+        message.error('该质检记录已随批次召回冻结，禁止编辑');
+        return;
+      }
       await inspectTable.update(editing.id, payload);
       message.success('已更新质检记录');
     } else {
+      if (isFrozen(bodies.find((body) => body.id === values.bodyId))) {
+        message.error('该胎体已随批次召回冻结，禁止新增质检');
+        return;
+      }
       await inspectTable.create(payload, 'inspect');
       message.success(
         payload.verdict === 'rework' ? '已登记返工，可在下方返工清单中查看定位结果' : '已登记质检合格',
@@ -176,7 +188,7 @@ export default function ExportView() {
       cancelText: '取消',
       onOk: async () => {
         await importSnapshot(parsed as LacquerSnapshot);
-        await Promise.all([loadBodies(), loadCoats(), loadRooms()]);
+        await Promise.all([loadBodies(), loadCoats(), loadRooms(), loadPaint()]);
         message.success('导入完成，数据已覆盖');
       },
     });
@@ -184,7 +196,7 @@ export default function ExportView() {
 
   const handleReset = async (): Promise<void> => {
     await resetDatabase();
-    await Promise.all([loadBodies(), loadCoats(), loadRooms()]);
+    await Promise.all([loadBodies(), loadCoats(), loadRooms(), loadPaint()]);
     message.success('已清空并重新载入演示数据');
   };
 
@@ -243,23 +255,26 @@ export default function ExportView() {
       title: '操作',
       key: 'action',
       width: 170,
-      render: (_value, record) => (
-        <Space size={4}>
-          <Button size="small" type="link" icon={<EditOutlined />} onClick={() => openEdit(record)}>
-            编辑
-          </Button>
-          <Popconfirm
-            title="删除该质检记录"
-            okText="确认"
-            cancelText="取消"
-            onConfirm={() => void inspectTable.remove(record.id).then(() => message.success('已删除'))}
-          >
-            <Button size="small" type="link" danger icon={<DeleteOutlined />}>
-              删除
+      render: (_value, record) =>
+        isFrozen(record) ? (
+          <FrozenBadge record={record} />
+        ) : (
+          <Space size={4}>
+            <Button size="small" type="link" icon={<EditOutlined />} onClick={() => openEdit(record)}>
+              编辑
             </Button>
-          </Popconfirm>
-        </Space>
-      ),
+            <Popconfirm
+              title="删除该质检记录"
+              okText="确认"
+              cancelText="取消"
+              onConfirm={() => void inspectTable.remove(record.id).then(() => message.success('已删除'))}
+            >
+              <Button size="small" type="link" danger icon={<DeleteOutlined />}>
+                删除
+              </Button>
+            </Popconfirm>
+          </Space>
+        ),
     },
   ];
 

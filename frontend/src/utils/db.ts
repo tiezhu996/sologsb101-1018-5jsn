@@ -12,12 +12,15 @@ import type { Room } from '@/types/room';
 import type { Polish } from '@/types/polish';
 import type { Inlay } from '@/types/inlay';
 import type { Inspect } from '@/types/inspect';
+import type { PaintBatch, PaintIssue } from '@/types/paint';
+import { UNTRACED_BATCH_ID } from '@/types/paint';
+import type { PaintRecall } from '@/types/recall';
 
 /** 数据库名（README 与导出文件均使用该名称） */
 export const DB_NAME = 'gblacquer';
 
 /** 当前数据结构版本号 */
-export const DB_SCHEMA_VERSION = 2;
+export const DB_SCHEMA_VERSION = 3;
 
 /** localStorage 侧少量元数据键 */
 export const LS_KEYS = {
@@ -84,6 +87,9 @@ class LacquerDatabase extends Dexie {
   polishes!: Table<Polish, string>;
   inlays!: Table<Inlay, string>;
   inspects!: Table<Inspect, string>;
+  paintBatches!: Table<PaintBatch, string>;
+  paintIssues!: Table<PaintIssue, string>;
+  paintRecalls!: Table<PaintRecall, string>;
 
   constructor() {
     super(DB_NAME);
@@ -99,7 +105,7 @@ class LacquerDatabase extends Dexie {
     });
 
     // v2：Coat 增加 paintType 索引；历史记录缺少 paintType 时按「生漆」回填
-    this.version(DB_SCHEMA_VERSION)
+    this.version(2)
       .stores({
         bodies: 'id, code, material, shape, state, updatedAt',
         coats: 'id, bodyId, seq, paintType, state, needRecheck, updatedAt',
@@ -119,13 +125,54 @@ class LacquerDatabase extends Dexie {
             if (typeof coat.thicknessUm !== 'number') coat.thicknessUm = 40;
           });
       });
+
+    // v3：漆料批次 / 领用 / 召回三张新表；五类下游表增加冻结标记索引；
+    // coats 增加 paintBatchId 索引，历史道次回填「未追溯」。
+    this.version(DB_SCHEMA_VERSION)
+      .stores({
+        bodies: 'id, code, material, shape, state, frozenByRecallId, updatedAt',
+        coats: 'id, bodyId, seq, paintType, paintBatchId, state, needRecheck, frozenByRecallId, updatedAt',
+        rooms: 'id, bodyId, date, verdict, updatedAt',
+        polishes: 'id, bodyId, seq, method, frozenByRecallId, updatedAt',
+        inlays: 'id, bodyId, type, position, frozenByRecallId, updatedAt',
+        inspects: 'id, bodyId, verdict, date, frozenByRecallId, updatedAt',
+        paintBatches: 'id, batchNo, paintType, status, updatedAt',
+        paintIssues: 'id, batchId, stage, bodyId, issueDate, updatedAt',
+        // noticeNo 唯一索引：同一通报只允许一份召回单
+        paintRecalls: 'id, noticeNo, batchId, status, updatedAt',
+      })
+      .upgrade(async (tx) => {
+        // 兼容 v2 已回填的 paintType；为历史道次补 paintBatchId = 未追溯
+        await tx
+          .table<Coat>('coats')
+          .toCollection()
+          .modify((coat) => {
+            const legal: PaintType[] = ['raw', 'color', 'topcoat'];
+            if (!legal.includes(coat.paintType)) coat.paintType = 'raw';
+            if (typeof coat.needRecheck !== 'boolean') coat.needRecheck = false;
+            if (typeof coat.thicknessUm !== 'number') coat.thicknessUm = 40;
+            if (typeof coat.paintBatchId !== 'string' || coat.paintBatchId.length === 0) {
+              coat.paintBatchId = UNTRACED_BATCH_ID;
+            }
+          });
+      });
   }
 }
 
 export const db = new LacquerDatabase();
 
-/** 六张业务表清单，事务中统一引用 */
-const TABLE_LIST = [db.bodies, db.coats, db.rooms, db.polishes, db.inlays, db.inspects];
+/** 全部业务表清单，事务中统一引用 */
+const TABLE_LIST = [
+  db.bodies,
+  db.coats,
+  db.rooms,
+  db.polishes,
+  db.inlays,
+  db.inspects,
+  db.paintBatches,
+  db.paintIssues,
+  db.paintRecalls,
+];
 
 /** 生成主键：短前缀 + 时间戳 + 随机串，避免多标签页写入冲突 */
 export function createId(prefix: string): string {
@@ -184,14 +231,14 @@ export async function seedDatabase(): Promise<void> {
   ];
 
   const coats: Coat[] = [
-    { id: 'coat_0101', bodyId: 'body_01', seq: 1, paintType: 'raw', colorName: '漆黑', coatDate: '2026-03-02', thicknessUm: 40, state: 'done', needRecheck: false, createdAt: now - 86400000 * 11, updatedAt: now - 86400000 * 10 },
-    { id: 'coat_0102', bodyId: 'body_01', seq: 2, paintType: 'color', colorName: '朱红', coatDate: '2026-03-06', thicknessUm: 45, state: 'toPolish', needRecheck: true, createdAt: now - 86400000 * 7, updatedAt: now - 86400000 * 2 },
-    { id: 'coat_0103', bodyId: 'body_01', seq: 3, paintType: 'topcoat', colorName: '推光本色', coatDate: '2026-03-12', thicknessUm: 30, state: 'todo', needRecheck: false, createdAt: now - 86400000 * 6, updatedAt: now - 86400000 * 6 },
-    { id: 'coat_0201', bodyId: 'body_02', seq: 1, paintType: 'raw', colorName: '漆黑', coatDate: '2026-03-03', thicknessUm: 35, state: 'done', needRecheck: false, createdAt: now - 86400000 * 8, updatedAt: now - 86400000 * 7 },
-    { id: 'coat_0202', bodyId: 'body_02', seq: 2, paintType: 'color', colorName: '赭石', coatDate: '2026-03-08', thicknessUm: 42, state: 'coated', needRecheck: true, createdAt: now - 86400000 * 5, updatedAt: now - 86400000 },
-    { id: 'coat_0301', bodyId: 'body_03', seq: 1, paintType: 'raw', colorName: '漆黑', coatDate: '2026-02-10', thicknessUm: 38, state: 'done', needRecheck: false, createdAt: now - 86400000 * 26, updatedAt: now - 86400000 * 25 },
-    { id: 'coat_0302', bodyId: 'body_03', seq: 2, paintType: 'color', colorName: '石绿', coatDate: '2026-02-18', thicknessUm: 44, state: 'done', needRecheck: false, createdAt: now - 86400000 * 20, updatedAt: now - 86400000 * 18 },
-    { id: 'coat_0303', bodyId: 'body_03', seq: 3, paintType: 'topcoat', colorName: '描金', coatDate: '2026-02-26', thicknessUm: 28, state: 'done', needRecheck: false, createdAt: now - 86400000 * 14, updatedAt: now - 86400000 * 4 },
+    { id: 'coat_0101', bodyId: 'body_01', seq: 1, paintType: 'raw', colorName: '漆黑', coatDate: '2026-03-02', thicknessUm: 40, state: 'done', needRecheck: false, paintBatchId: 'pb_raw_2401', createdAt: now - 86400000 * 11, updatedAt: now - 86400000 * 10 },
+    { id: 'coat_0102', bodyId: 'body_01', seq: 2, paintType: 'color', colorName: '朱红', coatDate: '2026-03-06', thicknessUm: 45, state: 'toPolish', needRecheck: true, paintBatchId: 'pb_color_2402', createdAt: now - 86400000 * 7, updatedAt: now - 86400000 * 2 },
+    { id: 'coat_0103', bodyId: 'body_01', seq: 3, paintType: 'topcoat', colorName: '推光本色', coatDate: '2026-03-12', thicknessUm: 30, state: 'todo', needRecheck: false, paintBatchId: 'pb_top_2403', createdAt: now - 86400000 * 6, updatedAt: now - 86400000 * 6 },
+    { id: 'coat_0201', bodyId: 'body_02', seq: 1, paintType: 'raw', colorName: '漆黑', coatDate: '2026-03-03', thicknessUm: 35, state: 'done', needRecheck: false, paintBatchId: 'pb_raw_2401', createdAt: now - 86400000 * 8, updatedAt: now - 86400000 * 7 },
+    { id: 'coat_0202', bodyId: 'body_02', seq: 2, paintType: 'color', colorName: '赭石', coatDate: '2026-03-08', thicknessUm: 42, state: 'coated', needRecheck: true, paintBatchId: 'pb_color_2402', createdAt: now - 86400000 * 5, updatedAt: now - 86400000 },
+    { id: 'coat_0301', bodyId: 'body_03', seq: 1, paintType: 'raw', colorName: '漆黑', coatDate: '2026-02-10', thicknessUm: 38, state: 'done', needRecheck: false, paintBatchId: UNTRACED_BATCH_ID, createdAt: now - 86400000 * 26, updatedAt: now - 86400000 * 25 },
+    { id: 'coat_0302', bodyId: 'body_03', seq: 2, paintType: 'color', colorName: '石绿', coatDate: '2026-02-18', thicknessUm: 44, state: 'done', needRecheck: false, paintBatchId: UNTRACED_BATCH_ID, createdAt: now - 86400000 * 20, updatedAt: now - 86400000 * 18 },
+    { id: 'coat_0303', bodyId: 'body_03', seq: 3, paintType: 'topcoat', colorName: '描金', coatDate: '2026-02-26', thicknessUm: 28, state: 'done', needRecheck: false, paintBatchId: UNTRACED_BATCH_ID, createdAt: now - 86400000 * 14, updatedAt: now - 86400000 * 4 },
   ];
 
   const rooms: Room[] = [
@@ -220,6 +267,32 @@ export async function seedDatabase(): Promise<void> {
     { id: 'inspect_0102', bodyId: 'body_02', verdict: 'rework', defectNote: '起皱（荫干过快）', inspector: '周衡', date: '2026-03-08', defectCoatSeq: 2, defectRoomId: 'room_0201', createdAt: now - 86400000, updatedAt: now - 86400000 },
   ];
 
+  // 漆料批次台账：余量 = 初始量 − 下列领用流水汇总（对账一致）
+  const paintBatches: PaintBatch[] = [
+    {
+      id: 'pb_raw_2401', batchNo: 'R-2401', paintType: 'raw', colorName: '漆黑', supplier: '巴山漆坊',
+      receivedDate: '2026-02-20', initialQtyG: 2000, remainingQtyG: 1820, status: 'active', noticeNo: null,
+      createdAt: now - 86400000 * 13, updatedAt: now - 86400000 * 9,
+    },
+    {
+      id: 'pb_color_2402', batchNo: 'C-2402', paintType: 'color', colorName: '朱红', supplier: '巴山漆坊',
+      receivedDate: '2026-02-25', initialQtyG: 1200, remainingQtyG: 1070, status: 'active', noticeNo: null,
+      createdAt: now - 86400000 * 10, updatedAt: now - 86400000 * 2,
+    },
+    {
+      id: 'pb_top_2403', batchNo: 'T-2403', paintType: 'topcoat', colorName: '推光本色', supplier: '岭南山漆社',
+      receivedDate: '2026-03-01', initialQtyG: 800, remainingQtyG: 800, status: 'active', noticeNo: null,
+      createdAt: now - 86400000 * 6, updatedAt: now - 86400000 * 6,
+    },
+  ];
+
+  const paintIssues: PaintIssue[] = [
+    { id: 'pi_0101', batchId: 'pb_raw_2401', stage: 'coat', qtyG: 90, receiver: '王丽', issueDate: '2026-03-02', bodyId: 'body_01', coatSeq: 1, note: '头道生漆打底', createdAt: now - 86400000 * 11, updatedAt: now - 86400000 * 11 },
+    { id: 'pi_0201', batchId: 'pb_raw_2401', stage: 'coat', qtyG: 90, receiver: '李成', issueDate: '2026-03-03', bodyId: 'body_02', coatSeq: 1, note: '', createdAt: now - 86400000 * 8, updatedAt: now - 86400000 * 8 },
+    { id: 'pi_0102', batchId: 'pb_color_2402', stage: 'coat', qtyG: 70, receiver: '王丽', issueDate: '2026-03-06', bodyId: 'body_01', coatSeq: 2, note: '朱红第二道', createdAt: now - 86400000 * 7, updatedAt: now - 86400000 * 7 },
+    { id: 'pi_0202', batchId: 'pb_color_2402', stage: 'inlay', qtyG: 60, receiver: '李成', issueDate: '2026-03-08', bodyId: 'body_02', coatSeq: null, note: '蛋壳拼贴封漆', createdAt: now - 86400000 * 5, updatedAt: now - 86400000 * 5 },
+  ];
+
   await db.transaction('rw', TABLE_LIST, async () => {
     await db.bodies.bulkPut(bodies);
     await db.coats.bulkPut(coats);
@@ -227,6 +300,8 @@ export async function seedDatabase(): Promise<void> {
     await db.polishes.bulkPut(polishes);
     await db.inlays.bulkPut(inlays);
     await db.inspects.bulkPut(inspects);
+    await db.paintBatches.bulkPut(paintBatches);
+    await db.paintIssues.bulkPut(paintIssues);
   });
 }
 
@@ -242,16 +317,22 @@ export interface LacquerSnapshot {
   polishes: Polish[];
   inlays: Inlay[];
   inspects: Inspect[];
+  paintBatches: PaintBatch[];
+  paintIssues: PaintIssue[];
+  paintRecalls: PaintRecall[];
 }
 
 export async function exportSnapshot(): Promise<LacquerSnapshot> {
-  const [bodies, coats, rooms, polishes, inlays, inspects] = await Promise.all([
+  const [bodies, coats, rooms, polishes, inlays, inspects, paintBatches, paintIssues, paintRecalls] = await Promise.all([
     db.bodies.toArray(),
     db.coats.toArray(),
     db.rooms.toArray(),
     db.polishes.toArray(),
     db.inlays.toArray(),
     db.inspects.toArray(),
+    db.paintBatches.toArray(),
+    db.paintIssues.toArray(),
+    db.paintRecalls.toArray(),
   ]);
   return {
     app: DB_NAME,
@@ -263,6 +344,9 @@ export async function exportSnapshot(): Promise<LacquerSnapshot> {
     polishes,
     inlays,
     inspects,
+    paintBatches,
+    paintIssues,
+    paintRecalls,
   };
 }
 
@@ -271,14 +355,38 @@ export function validateSnapshot(input: unknown): string {
   if (typeof input !== 'object' || input === null) return '文件内容不是合法的 JSON 对象';
   const snapshot = input as Partial<LacquerSnapshot>;
   if (snapshot.app !== DB_NAME) return `备份文件不属于本项目（app=${String(snapshot.app)}）`;
-  const keys: Array<keyof LacquerSnapshot> = ['bodies', 'coats', 'rooms', 'polishes', 'inlays', 'inspects'];
+  const keys: Array<keyof LacquerSnapshot> = [
+    'bodies',
+    'coats',
+    'rooms',
+    'polishes',
+    'inlays',
+    'inspects',
+    'paintBatches',
+    'paintIssues',
+    'paintRecalls',
+  ];
   for (const key of keys) {
     if (!Array.isArray(snapshot[key])) return `备份文件缺少 ${String(key)} 集合`;
   }
   return '';
 }
 
-export async function importSnapshot(snapshot: LacquerSnapshot): Promise<void> {
+/** 旧版备份（v2 及以前）没有漆料三表与 paintBatchId，导入时补齐为「未追溯」 */
+export function normalizeSnapshot(raw: LacquerSnapshot): LacquerSnapshot {
+  const paintBatches = raw.paintBatches ?? [];
+  const paintIssues = raw.paintIssues ?? [];
+  const paintRecalls = raw.paintRecalls ?? [];
+  const coats = raw.coats.map((coat) =>
+    typeof coat.paintBatchId === 'string' && coat.paintBatchId.length > 0
+      ? coat
+      : { ...coat, paintBatchId: UNTRACED_BATCH_ID },
+  );
+  return { ...raw, coats, paintBatches, paintIssues, paintRecalls };
+}
+
+export async function importSnapshot(raw: LacquerSnapshot): Promise<void> {
+  const snapshot = normalizeSnapshot(raw);
   await clearAllTables();
   await db.transaction('rw', TABLE_LIST, async () => {
     await db.bodies.bulkPut(snapshot.bodies);
@@ -287,6 +395,9 @@ export async function importSnapshot(snapshot: LacquerSnapshot): Promise<void> {
     await db.polishes.bulkPut(snapshot.polishes);
     await db.inlays.bulkPut(snapshot.inlays);
     await db.inspects.bulkPut(snapshot.inspects);
+    await db.paintBatches.bulkPut(snapshot.paintBatches);
+    await db.paintIssues.bulkPut(snapshot.paintIssues);
+    await db.paintRecalls.bulkPut(snapshot.paintRecalls);
   });
 }
 
@@ -299,6 +410,9 @@ export async function clearAllTables(): Promise<void> {
       db.polishes.clear(),
       db.inlays.clear(),
       db.inspects.clear(),
+      db.paintBatches.clear(),
+      db.paintIssues.clear(),
+      db.paintRecalls.clear(),
     ]);
   });
 }
@@ -310,15 +424,18 @@ export async function resetDatabase(): Promise<void> {
 }
 
 export async function countAll(): Promise<Record<string, number>> {
-  const [bodies, coats, rooms, polishes, inlays, inspects] = await Promise.all([
+  const [bodies, coats, rooms, polishes, inlays, inspects, paintBatches, paintIssues, paintRecalls] = await Promise.all([
     db.bodies.count(),
     db.coats.count(),
     db.rooms.count(),
     db.polishes.count(),
     db.inlays.count(),
     db.inspects.count(),
+    db.paintBatches.count(),
+    db.paintIssues.count(),
+    db.paintRecalls.count(),
   ]);
-  return { bodies, coats, rooms, polishes, inlays, inspects };
+  return { bodies, coats, rooms, polishes, inlays, inspects, paintBatches, paintIssues, paintRecalls };
 }
 
 /* ------------------------------ 级联删除 ------------------------------ */
@@ -330,6 +447,8 @@ export async function removeBodyCascade(bodyId: string): Promise<void> {
     await db.polishes.where('bodyId').equals(bodyId).delete();
     await db.inlays.where('bodyId').equals(bodyId).delete();
     await db.inspects.where('bodyId').equals(bodyId).delete();
+    // 该胎体的领用流水仅解绑胎体引用，保留台账发生额，避免破坏余量对账
+    await db.paintIssues.where('bodyId').equals(bodyId).modify({ bodyId: null, coatSeq: null });
     await db.bodies.delete(bodyId);
   });
 }

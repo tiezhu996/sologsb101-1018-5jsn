@@ -13,6 +13,8 @@ const CoatBoard = lazy(() => import('../pages/CoatBoard'));
 const RoomLog = lazy(() => import('../pages/RoomLog'));
 const PolishBoard = lazy(() => import('../pages/PolishBoard'));
 const InlayBoard = lazy(() => import('../pages/InlayBoard'));
+const PaintLedger = lazy(() => import('../pages/PaintLedger'));
+const RecallBoard = lazy(() => import('../pages/RecallBoard'));
 const ExportView = lazy(() => import('../pages/ExportView'));
 
 /** ROUTES 常量：页面与导航统一引用，避免散落硬编码 */
@@ -22,6 +24,8 @@ export const ROUTES = {
   rooms: '/rooms',
   polish: '/polish',
   inlays: '/inlays',
+  paint: '/paint',
+  recall: '/recall',
   export: '/export',
 } as const;
 
@@ -51,6 +55,8 @@ export const appRoutes: RouteObject[] = [
       { path: 'rooms', element: withSuspense(<RoomLog />) },
       { path: 'polish', element: withSuspense(<PolishBoard />) },
       { path: 'inlays', element: withSuspense(<InlayBoard />) },
+      { path: 'paint', element: withSuspense(<PaintLedger />) },
+      { path: 'recall', element: withSuspense(<RecallBoard />) },
       { path: 'export', element: withSuspense(<ExportView />) },
       { path: '*', element: <Navigate to={ROUTES.bodies} replace /> },
     ],

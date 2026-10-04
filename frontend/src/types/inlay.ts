@@ -2,11 +2,12 @@
  * 镶嵌（Inlay）数据模型
  * 螺钿、蛋壳、描金、戗金等纹饰的登记，叠加显示于器型示意区。
  */
+import type { FrozenMeta } from './frozen';
 
 /** 镶嵌类型 */
 export type InlayType = 'nacre' | 'eggshell' | 'goldTrace' | 'incisedGold';
 
-export interface Inlay {
+export interface Inlay extends FrozenMeta {
   id: string;
   /** 所属胎体 id */
   bodyId: string;

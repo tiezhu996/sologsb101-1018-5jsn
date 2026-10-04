@@ -25,6 +25,8 @@ import { DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons';
 import EmptyPanel from '@/components/common/EmptyPanel';
 import FilterBar, { useFilterQuery, type FilterSelectConfig } from '@/components/common/FilterBar';
 import StatBadge from '@/components/common/StatBadge';
+import FrozenBadge from '@/components/common/FrozenBadge';
+import { isFrozen } from '@/types/frozen';
 import { useIdbTable } from '@/hooks/useIdbTable';
 import { useBodyStore } from '@/stores/bodyStore';
 import { BODY_SHAPE_LABEL } from '@/types/body';
@@ -117,9 +119,17 @@ export default function InlayBoard() {
   const submit = async (): Promise<void> => {
     const values = await form.validateFields();
     if (editing) {
+      if (isFrozen(editing)) {
+        message.error('该镶嵌记录已随批次召回冻结，禁止编辑');
+        return;
+      }
       await inlayTable.update(editing.id, values);
       message.success('已更新镶嵌登记');
     } else {
+      if (isFrozen(bodies.find((body) => body.id === values.bodyId))) {
+        message.error('该胎体已随批次召回冻结，禁止新增镶嵌登记');
+        return;
+      }
       await inlayTable.create(values, 'inlay');
       message.success('已新增镶嵌登记');
     }
@@ -156,23 +166,26 @@ export default function InlayBoard() {
       title: '操作',
       key: 'action',
       width: 170,
-      render: (_value, record) => (
-        <Space size={4}>
-          <Button size="small" type="link" icon={<EditOutlined />} onClick={() => openEdit(record)}>
-            编辑
-          </Button>
-          <Popconfirm
-            title="删除该镶嵌记录"
-            okText="确认"
-            cancelText="取消"
-            onConfirm={() => void inlayTable.remove(record.id).then(() => message.success('已删除'))}
-          >
-            <Button size="small" type="link" danger icon={<DeleteOutlined />}>
-              删除
+      render: (_value, record) =>
+        isFrozen(record) ? (
+          <FrozenBadge record={record} />
+        ) : (
+          <Space size={4}>
+            <Button size="small" type="link" icon={<EditOutlined />} onClick={() => openEdit(record)}>
+              编辑
             </Button>
-          </Popconfirm>
-        </Space>
-      ),
+            <Popconfirm
+              title="删除该镶嵌记录"
+              okText="确认"
+              cancelText="取消"
+              onConfirm={() => void inlayTable.remove(record.id).then(() => message.success('已删除'))}
+            >
+              <Button size="small" type="link" danger icon={<DeleteOutlined />}>
+                删除
+              </Button>
+            </Popconfirm>
+          </Space>
+        ),
     },
   ];
 
@@ -240,7 +253,12 @@ export default function InlayBoard() {
                 const now = Date.now();
                 const rows = inlayTable.rows
                   .filter((row) => selectedIds.includes(row.id))
+                  .filter((row) => !isFrozen(row))
                   .map((row) => ({ ...row, type: batchType, updatedAt: now }));
+                if (rows.length === 0) {
+                  message.warning('选中记录均已冻结，未调整');
+                  return;
+                }
                 void inlayTable.bulkPut(rows).then(() => {
                   message.success(`已批量改为${INLAY_TYPE_LABEL[batchType]}`);
                   setSelectedIds([]);

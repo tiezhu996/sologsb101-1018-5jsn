@@ -2,11 +2,12 @@
  * 打磨推光（Polish）数据模型
  * 按道次登记的磨料目数与手法时长，未打磨完不许进入下一道罩漆。
  */
+import type { FrozenMeta } from './frozen';
 
 /** 手法：水砂 / 推光 / 揩清 */
 export type PolishMethod = 'water' | 'burnish' | 'wipe';
 
-export interface Polish {
+export interface Polish extends FrozenMeta {
   id: string;
   /** 所属胎体 id */
   bodyId: string;

@@ -33,9 +33,12 @@ import EmptyPanel from '@/components/common/EmptyPanel';
 import FilterBar, { useFilterQuery, type FilterSelectConfig } from '@/components/common/FilterBar';
 import StatBadge from '@/components/common/StatBadge';
 import StageTag from '@/components/common/StageTag';
+import TraceTag from '@/components/common/TraceTag';
+import FrozenBadge from '@/components/common/FrozenBadge';
 import { useCoatProgress } from '@/hooks/useCoatProgress';
 import { useBodyStore } from '@/stores/bodyStore';
 import { useCoatStore } from '@/stores/coatStore';
+import { usePaintStore } from '@/stores/paintStore';
 import {
   COAT_STATE_LABEL,
   COAT_STATE_OPTIONS,
@@ -49,6 +52,7 @@ import {
   type PaintType,
 } from '@/types/coat';
 import { BODY_SHAPE_LABEL } from '@/types/body';
+import { UNTRACED_BATCH_ID } from '@/types/paint';
 import { suggestIntervalHours } from '@/utils/humidity';
 
 const FILTER_KEYS = ['paintType', 'state'] as const;
@@ -74,6 +78,9 @@ export default function CoatBoard() {
   const reorderCoats = useCoatStore((state) => state.reorderCoats);
   const nextSeq = useCoatStore((state) => state.nextSeq);
   const suggestForBody = useCoatStore((state) => state.suggestForBody);
+
+  const batches = usePaintStore((state) => state.batches);
+  const batchMap = useMemo(() => new Map(batches.map((batch) => [batch.id, batch])), [batches]);
 
   const { progressOf, currentCoatText, totals } = useCoatProgress();
   const url = useFilterQuery(FILTER_KEYS);
@@ -125,6 +132,7 @@ export default function CoatBoard() {
     form.setFieldsValue({
       ...createEmptyCoatDraft(bodyId, nextSeq(bodyId)),
       paintType: suggestion?.paintType ?? 'raw',
+      paintBatchId: UNTRACED_BATCH_ID,
     });
     setOpen(true);
   };
@@ -140,6 +148,7 @@ export default function CoatBoard() {
       thicknessUm: coat.thicknessUm,
       state: coat.state,
       needRecheck: coat.needRecheck,
+      paintBatchId: coat.paintBatchId || UNTRACED_BATCH_ID,
     });
     setOpen(true);
   };
@@ -219,6 +228,15 @@ export default function CoatBoard() {
       ),
     },
     { title: '漆种', dataIndex: 'paintType', width: 100, render: (value: PaintType) => <Tag>{PAINT_TYPE_LABEL[value]}</Tag> },
+    {
+      title: '漆料批次',
+      dataIndex: 'paintBatchId',
+      width: 110,
+      render: (value: string) => {
+        const batch = batchMap.get(value);
+        return <TraceTag batchId={value} batchNo={batch?.batchNo} inactive={batch?.status === 'inactive'} />;
+      },
+    },
     { title: '色名', dataIndex: 'colorName', width: 120 },
     { title: '涂刷日期', dataIndex: 'coatDate', width: 130, sorter: (a, b) => a.coatDate.localeCompare(b.coatDate) },
     {
@@ -230,28 +248,36 @@ export default function CoatBoard() {
     {
       title: '操作',
       key: 'action',
-      width: 220,
-      render: (_value, record) => (
-        <Space size={4} wrap>
-          <Button size="small" type="link" onClick={() => void handleAdvance(record)}>
-            推进状态
-          </Button>
-          <Button size="small" type="link" icon={<EditOutlined />} onClick={() => openEdit(record)}>
-            编辑
-          </Button>
-          <Popconfirm
-            title="删除该道次"
-            description="删除后其余道次会自动重编号。"
-            okText="确认"
-            cancelText="取消"
-            onConfirm={() => void removeCoat(record.id).then(() => message.success('已删除该道次'))}
-          >
-            <Button size="small" type="link" danger icon={<DeleteOutlined />}>
-              删除
+      width: 240,
+      render: (_value, record) =>
+        record.frozenByRecallId ? (
+          <FrozenBadge
+            record={record}
+            originalText={
+              COAT_STATE_LABEL[(record.frozenOriginalState ?? record.state) as Coat['state']] ?? '原状态'
+            }
+          />
+        ) : (
+          <Space size={4} wrap>
+            <Button size="small" type="link" onClick={() => void handleAdvance(record)}>
+              推进状态
             </Button>
-          </Popconfirm>
-        </Space>
-      ),
+            <Button size="small" type="link" icon={<EditOutlined />} onClick={() => openEdit(record)}>
+              编辑
+            </Button>
+            <Popconfirm
+              title="删除该道次"
+              description="删除后其余道次会自动重编号。"
+              okText="确认"
+              cancelText="取消"
+              onConfirm={() => void removeCoat(record.id).then(() => message.success('已删除该道次'))}
+            >
+              <Button size="small" type="link" danger icon={<DeleteOutlined />}>
+                删除
+              </Button>
+            </Popconfirm>
+          </Space>
+        ),
     },
   ];
 
@@ -448,6 +474,25 @@ export default function CoatBoard() {
               options={[
                 { value: false, label: '正常' },
                 { value: true, label: '待复检（荫房异常）' },
+              ]}
+            />
+          </Form.Item>
+          <Form.Item
+            name="paintBatchId"
+            label="使用漆料批次"
+            tooltip="旧数据没有批次时保留为「未追溯」，停用召回时据此圈定受影响道次"
+            rules={[{ required: true, message: '请选择漆料批次（旧数据可选未追溯）' }]}
+          >
+            <Select
+              showSearch
+              options={[
+                { value: UNTRACED_BATCH_ID, label: '未追溯（旧数据无批次）' },
+                ...batches.map((batch) => ({
+                  value: batch.id,
+                  label: `${batch.batchNo} · ${PAINT_TYPE_LABEL[batch.paintType]}${batch.colorName}${
+                    batch.status === 'inactive' ? '（已停用）' : ''
+                  }`,
+                })),
               ]}
             />
           </Form.Item>

@@ -26,6 +26,8 @@ import { DeleteOutlined, EditOutlined, PlusOutlined, ThunderboltOutlined } from 
 import EmptyPanel from '@/components/common/EmptyPanel';
 import StatBadge from '@/components/common/StatBadge';
 import StageTag from '@/components/common/StageTag';
+import FrozenBadge from '@/components/common/FrozenBadge';
+import { isFrozen } from '@/types/frozen';
 import { useCoatProgress } from '@/hooks/useCoatProgress';
 import { useIdbTable } from '@/hooks/useIdbTable';
 import { useBodyStore } from '@/stores/bodyStore';
@@ -114,9 +116,18 @@ export default function PolishBoard() {
   const submit = async (): Promise<void> => {
     const values = await form.validateFields();
     if (editing) {
+      if (isFrozen(editing)) {
+        message.error('该打磨记录已随批次召回冻结，禁止编辑');
+        return;
+      }
       await polishTable.update(editing.id, values);
       message.success('已更新打磨记录');
     } else {
+      const coat = bodyCoats.find((item) => item.seq === values.seq);
+      if (isFrozen(coat) || isFrozen(activeBody)) {
+        message.error('胎体或该道次已随批次召回冻结，禁止新增打磨记录');
+        return;
+      }
       await polishTable.create(values, 'polish');
       message.success('已新增打磨记录');
     }
@@ -148,9 +159,17 @@ export default function PolishBoard() {
 
   /** 打磨完成后把道次推进到已完成 */
   const finishPolish = async (row: Polish): Promise<void> => {
+    if (isFrozen(row)) {
+      message.error('该打磨记录已冻结，禁止操作');
+      return;
+    }
     const coat = bodyCoats.find((item) => item.seq === row.seq);
     if (!coat) {
       message.warning('未找到对应道次');
+      return;
+    }
+    if (isFrozen(coat)) {
+      message.error('该道次已随批次召回冻结，禁止推进');
       return;
     }
     await updateCoat(coat.id, { state: 'done', needRecheck: false });
@@ -180,28 +199,31 @@ export default function PolishBoard() {
       title: '操作',
       key: 'action',
       width: 250,
-      render: (_value, record) => (
-        <Space size={4} wrap>
-          <Tooltip title="打磨完成并回写道次状态">
-            <Button size="small" type="link" onClick={() => void finishPolish(record)}>
-              完成打磨
+      render: (_value, record) =>
+        isFrozen(record) ? (
+          <FrozenBadge record={record} />
+        ) : (
+          <Space size={4} wrap>
+            <Tooltip title="打磨完成并回写道次状态">
+              <Button size="small" type="link" onClick={() => void finishPolish(record)}>
+                完成打磨
+              </Button>
+            </Tooltip>
+            <Button size="small" type="link" icon={<EditOutlined />} onClick={() => openEdit(record)}>
+              编辑
             </Button>
-          </Tooltip>
-          <Button size="small" type="link" icon={<EditOutlined />} onClick={() => openEdit(record)}>
-            编辑
-          </Button>
-          <Popconfirm
-            title="删除该打磨记录"
-            okText="确认"
-            cancelText="取消"
-            onConfirm={() => void polishTable.remove(record.id).then(() => message.success('已删除'))}
-          >
-            <Button size="small" type="link" danger icon={<DeleteOutlined />}>
-              删除
-            </Button>
-          </Popconfirm>
-        </Space>
-      ),
+            <Popconfirm
+              title="删除该打磨记录"
+              okText="确认"
+              cancelText="取消"
+              onConfirm={() => void polishTable.remove(record.id).then(() => message.success('已删除'))}
+            >
+              <Button size="small" type="link" danger icon={<DeleteOutlined />}>
+                删除
+              </Button>
+            </Popconfirm>
+          </Space>
+        ),
     },
   ];
 

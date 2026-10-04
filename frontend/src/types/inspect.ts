@@ -2,11 +2,12 @@
  * 成品质检（Inspect）数据模型
  * 判定返工时需定位到具体道次与荫房记录，并生成返工清单。
  */
+import type { FrozenMeta } from './frozen';
 
 /** 质检结论：合格 / 返工 */
 export type InspectVerdict = 'pass' | 'rework';
 
-export interface Inspect {
+export interface Inspect extends FrozenMeta {
   id: string;
   /** 所属胎体 id */
   bodyId: string;

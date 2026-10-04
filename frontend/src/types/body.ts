@@ -2,6 +2,7 @@
  * 胎体（Body）数据模型
  * 一件漆器的胎骨档案：材质、器型、主要尺寸与当前工序状态。
  */
+import type { FrozenMeta } from './frozen';
 
 /** 胎体材质：木胎 / 脱胎 / 金属胎 */
 export type BodyMaterial = 'wood' | 'lacquered' | 'metal';
@@ -9,10 +10,10 @@ export type BodyMaterial = 'wood' | 'lacquered' | 'metal';
 /** 器型：碗 / 盘 / 盒 / 瓶 */
 export type BodyShape = 'bowl' | 'plate' | 'box' | 'vase';
 
-/** 胎体状态：待髹涂 / 髹涂中 / 待荫干 / 已完成 */
-export type BodyState = 'pending' | 'coating' | 'drying' | 'done';
+/** 胎体状态：待髹涂 / 髹涂中 / 待荫干 / 已完成 / 已冻结（召回，保留原值） */
+export type BodyState = 'pending' | 'coating' | 'drying' | 'done' | 'frozen';
 
-export interface Body {
+export interface Body extends FrozenMeta {
   /** 主键，播种数据使用固定字符串便于深链命中 */
   id: string;
   /** 工作室内部编号 */
@@ -51,6 +52,7 @@ export const BODY_STATE_LABEL: Record<BodyState, string> = {
   coating: '髹涂中',
   drying: '待荫干',
   done: '已完成',
+  frozen: '已冻结',
 };
 
 export const BODY_STATE_COLOR: Record<BodyState, string> = {
@@ -58,10 +60,11 @@ export const BODY_STATE_COLOR: Record<BodyState, string> = {
   coating: '#c9963c',
   drying: '#3a6ea5',
   done: '#2f6f4f',
+  frozen: '#b03a2e',
 };
 
-/** 状态推进链路，供「推进状态」按钮使用 */
-export const BODY_STATE_FLOW: readonly BodyState[] = ['pending', 'coating', 'drying', 'done'];
+/** 状态推进链路，供「推进状态」按钮使用；冻结态不参与正常流转 */
+export const BODY_STATE_FLOW: readonly Exclude<BodyState, 'frozen'>[] = ['pending', 'coating', 'drying', 'done'];
 
 export const BODY_MATERIAL_OPTIONS: ReadonlyArray<{ value: BodyMaterial; label: string }> = [
   { value: 'wood', label: '木胎' },
@@ -79,8 +82,9 @@ export const BODY_SHAPE_OPTIONS: ReadonlyArray<{ value: BodyShape; label: string
 export const BODY_STATE_OPTIONS: ReadonlyArray<{ value: BodyState; label: string }> =
   BODY_STATE_FLOW.map((state) => ({ value: state, label: BODY_STATE_LABEL[state] }));
 
-/** 下一个状态；已是终态时返回原状态 */
+/** 下一个状态；已是终态或冻结态时返回原状态 */
 export function nextBodyState(state: BodyState): BodyState {
+  if (state === 'frozen') return state;
   const index = BODY_STATE_FLOW.indexOf(state);
   if (index < 0 || index >= BODY_STATE_FLOW.length - 1) return state;
   return BODY_STATE_FLOW[index + 1] as BodyState;
